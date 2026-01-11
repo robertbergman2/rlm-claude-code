@@ -69,17 +69,21 @@ MODEL_REGISTRY: dict[str, tuple[Provider, str]] = {
     "claude-opus-4-5-20251101": (Provider.ANTHROPIC, "claude-opus-4-5-20251101"),
     "claude-sonnet-4-20250514": (Provider.ANTHROPIC, "claude-sonnet-4-20250514"),
     "claude-haiku-4-5-20251001": (Provider.ANTHROPIC, "claude-haiku-4-5-20251001"),
-    # OpenAI models
+    # OpenAI GPT-5.2 models
     "gpt-5.2": (Provider.OPENAI, "gpt-5.2"),
-    "gpt-5.2-codex": (Provider.OPENAI, "gpt-5.2-codex"),
     "gpt-5.2-pro": (Provider.OPENAI, "gpt-5.2-pro"),
+    "gpt-5.2-chat-latest": (Provider.OPENAI, "gpt-5.2-chat-latest"),
+    # GPT-5.2-Codex: API access coming soon, use gpt-5.2 as fallback
+    "gpt-5.2-codex": (Provider.OPENAI, "gpt-5.2"),  # Fallback until API available
+    # OpenAI GPT-4 models
     "gpt-4o": (Provider.OPENAI, "gpt-4o"),
     "gpt-4o-mini": (Provider.OPENAI, "gpt-4o-mini"),
+    # OpenAI reasoning models
     "o1": (Provider.OPENAI, "o1"),
     "o1-mini": (Provider.OPENAI, "o1-mini"),
     "o3-mini": (Provider.OPENAI, "o3-mini"),
     # Shortcuts
-    "codex": (Provider.OPENAI, "gpt-5.2-codex"),
+    "codex": (Provider.OPENAI, "gpt-5.2"),  # Fallback until Codex API available
 }
 
 
@@ -266,12 +270,21 @@ class OpenAIClient(BaseLLMClient):
             full_messages.append({"role": "system", "content": system})
         full_messages.extend(messages)
 
-        response = self.client.chat.completions.create(
-            model=model,
-            messages=full_messages,
-            max_tokens=max_tokens,
-            temperature=temperature,
-        )
+        # GPT-5.2+ uses max_completion_tokens instead of max_tokens
+        if model.startswith("gpt-5") or model.startswith("o1") or model.startswith("o3"):
+            response = self.client.chat.completions.create(
+                model=model,
+                messages=full_messages,
+                max_completion_tokens=max_tokens,
+                temperature=temperature,
+            )
+        else:
+            response = self.client.chat.completions.create(
+                model=model,
+                messages=full_messages,
+                max_tokens=max_tokens,
+                temperature=temperature,
+            )
 
         content = response.choices[0].message.content or ""
         input_tokens = response.usage.prompt_tokens if response.usage else 0
@@ -309,14 +322,25 @@ class OpenAIClient(BaseLLMClient):
             full_messages.append({"role": "system", "content": system})
         full_messages.extend(messages)
 
-        stream = self.client.chat.completions.create(
-            model=model,
-            messages=full_messages,
-            max_tokens=max_tokens,
-            temperature=temperature,
-            stream=True,
-            stream_options={"include_usage": True},
-        )
+        # GPT-5.2+ uses max_completion_tokens instead of max_tokens
+        if model.startswith("gpt-5") or model.startswith("o1") or model.startswith("o3"):
+            stream = self.client.chat.completions.create(
+                model=model,
+                messages=full_messages,
+                max_completion_tokens=max_tokens,
+                temperature=temperature,
+                stream=True,
+                stream_options={"include_usage": True},
+            )
+        else:
+            stream = self.client.chat.completions.create(
+                model=model,
+                messages=full_messages,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                stream=True,
+                stream_options={"include_usage": True},
+            )
 
         input_tokens = 0
         output_tokens = 0
