@@ -518,6 +518,31 @@ class RLMEnvironment:
         """
         self.locals[name] = value
 
+    def get_variable(self, name: str) -> Any:
+        """
+        Get a variable from the REPL namespace.
+
+        Args:
+            name: Variable name
+
+        Returns:
+            Variable value
+
+        Raises:
+            KeyError: If variable not found
+        """
+        # Check locals first
+        if name in self.locals:
+            return self.locals[name]
+        # Then globals
+        if name in self.globals:
+            return self.globals[name]
+        # Check working_memory
+        working_memory = self.globals.get("working_memory", {})
+        if name in working_memory:
+            return working_memory[name]
+        raise KeyError(f"Variable '{name}' not found")
+
     def get_execution_history(self) -> list[dict[str, Any]]:
         """Get execution history for debugging."""
         return self.history.copy()
