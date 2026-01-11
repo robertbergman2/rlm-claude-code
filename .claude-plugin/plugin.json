@@ -1,0 +1,23 @@
+{
+  "name": "rlm-claude-code",
+  "version": "0.1.0",
+  "description": "Recursive Language Model integration for Claude Code - unbounded context handling via REPL-based decomposition",
+  "author": "Rand",
+  "license": "MIT",
+  "claude_code_version": ">=1.0.0",
+  "homepage": "https://github.com/heroku/rlm-claude-code",
+  "repository": "https://github.com/heroku/rlm-claude-code",
+  "keywords": [
+    "rlm",
+    "recursive-language-model",
+    "context-management",
+    "constraint-programming",
+    "verification"
+  ],
+  "capabilities": {
+    "agents": true,
+    "commands": true,
+    "skills": true,
+    "hooks": true
+  }
+}
