@@ -51,8 +51,8 @@ claude plugins install rlm-claude-code --marketplace rlm-claude-code-marketplace
 
 You should see:
 ```
-Installing rlm-claude-code@0.1.0 from rlm-claude-code-marketplace...
-Successfully installed rlm-claude-code@0.1.0
+Installing rlm-claude-code@0.2.0 from rlm-claude-code-marketplace...
+Successfully installed rlm-claude-code@0.2.0
 ```
 
 #### Step 3: Install Dependencies
@@ -94,7 +94,7 @@ claude plugins list
 
 Look for:
 ```
-rlm-claude-code@rlm-claude-code-marketplace (0.1.0)
+rlm-claude-code@rlm-claude-code-marketplace (0.2.0)
 ```
 
 ### Step 2: Start Claude Code
@@ -149,7 +149,7 @@ cd ~/.claude/plugins/cache/rlm-claude-code-marketplace/rlm-claude-code/0.1.0
 uv run pytest tests/unit/ tests/integration/ -v --tb=short
 ```
 
-Expected: 700+ tests pass.
+Expected: 1000+ tests pass.
 
 ---
 

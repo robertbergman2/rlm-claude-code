@@ -150,7 +150,7 @@ RLM creates a config at `~/.claude/rlm-config.json` on first run. Default settin
 claude plugins list
 
 # Should show:
-# rlm-claude-code@rlm-claude-code-marketplace (0.1.0)
+# rlm-claude-code@rlm-claude-code-marketplace (0.2.0)
 ```
 
 ### 2. Verify RLM Initialization
