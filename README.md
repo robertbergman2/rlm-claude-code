@@ -48,7 +48,7 @@ User Query
     │
     ▼
 ┌─────────────────────────────────────────────────────────┐
-│              INTELLIGENT ORCHESTRATOR                    │
+│              INTELLIGENT ORCHESTRATOR                   │
 │  ┌───────────────────┐   ┌───────────────────────────┐  │
 │  │ Complexity        │   │ Orchestration Decision    │  │
 │  │ Classifier        │   │ • Activate RLM?           │  │
@@ -60,8 +60,8 @@ User Query
     │
     ▼ (if RLM activated)
 ┌─────────────────────────────────────────────────────────┐
-│                 RLM EXECUTION ENGINE                     │
-│                                                          │
+│                 RLM EXECUTION ENGINE                    │
+│                                                         │
 │  ┌──────────────────┐    ┌──────────────────────────┐   │
 │  │  Context Manager │    │     REPL Sandbox         │   │
 │  │  • Externalize   │───►│  • peek(), search()      │   │
@@ -70,8 +70,8 @@ User Query
 │  └──────────────────┘    │  • find_relevant()       │   │
 │                          │  • memory_*() functions  │   │
 │                          └──────────────────────────┘   │
-│                                     │                    │
-│                                     ▼                    │
+│                                     │                   │
+│                                     ▼                   │
 │  ┌──────────────────┐    ┌──────────────────────────┐   │
 │  │ Recursive Handler│    │    Tool Bridge           │   │
 │  │ • Depth ≤ 3      │    │  • bash, read, grep      │   │
@@ -82,16 +82,16 @@ User Query
     │
     ▼
 ┌─────────────────────────────────────────────────────────┐
-│                  PERSISTENCE LAYER                       │
-│                                                          │
+│                  PERSISTENCE LAYER                      │
+│                                                         │
 │  ┌──────────────────┐    ┌──────────────────────────┐   │
 │  │  Memory Store    │    │   Reasoning Traces       │   │
 │  │  • Facts, exps   │    │  • Goals, decisions      │   │
 │  │  • Hyperedges    │    │  • Options, outcomes     │   │
 │  │  • SQLite + WAL  │    │  • Decision trees        │   │
 │  └──────────────────┘    └──────────────────────────┘   │
-│           │                         │                    │
-│           ▼                         ▼                    │
+│           │                         │                   │
+│           ▼                         ▼                   │
 │  ┌──────────────────┐    ┌──────────────────────────┐   │
 │  │ Memory Evolution │    │   Strategy Cache         │   │
 │  │ task → session   │    │  • Learn from success    │   │
@@ -102,11 +102,11 @@ User Query
     │
     ▼
 ┌─────────────────────────────────────────────────────────┐
-│                  BUDGET & TRAJECTORY                     │
-│  • Token tracking per component                          │
-│  • Cost limits with alerts                               │
-│  • Streaming trajectory output                           │
-│  • JSON export for analysis                              │
+│                  BUDGET & TRAJECTORY                    │
+│  • Token tracking per component                         │
+│  • Cost limits with alerts                              │
+│  • Streaming trajectory output                          │
+│  • JSON export for analysis                             │
 └─────────────────────────────────────────────────────────┘
     │
     ▼
