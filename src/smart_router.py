@@ -13,11 +13,11 @@ Routes queries to the optimal model based on:
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
-from .api_client import MODEL_REGISTRY, Provider, resolve_model
+from .api_client import Provider, resolve_model
 
 
 class QueryType(Enum):

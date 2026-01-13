@@ -10,15 +10,16 @@ integrating complexity classification, orchestration, and user preferences.
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any
 
 from .complexity_classifier import (
     extract_complexity_signals,
     is_definitely_simple,
     should_activate_rlm,
 )
-from .orchestration_schema import ExecutionMode, OrchestrationPlan, ToolAccessLevel
+from .orchestration_schema import OrchestrationPlan
 from .types import SessionContext, TaskComplexitySignals
 from .user_preferences import UserPreferences
 

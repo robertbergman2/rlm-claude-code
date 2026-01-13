@@ -202,7 +202,7 @@ class MemoryEvolution:
                         node_ids=[node.id, keeper.id],
                         from_tier="task",
                         to_tier="archive",
-                        reasoning=f"Merged duplicate with higher confidence version",
+                        reasoning="Merged duplicate with higher confidence version",
                     )
 
                 # Promote the keeper to session
@@ -430,9 +430,6 @@ class MemoryEvolution:
 
             if days_since <= 0:
                 continue  # Recently accessed, no decay
-
-            # Base decay: factor ^ days (SPEC-03.16)
-            base_decay = factor**days_since
 
             # Access frequency amplifier (SPEC-03.17)
             # Higher access count = slower decay

@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from .cost_tracker import MODEL_COSTS, CostComponent
+from .cost_tracker import CostComponent, estimate_call_cost
 from .trajectory import TrajectoryEvent, TrajectoryEventType
 
 if TYPE_CHECKING:
@@ -247,11 +247,8 @@ class EnhancedBudgetTracker:
         self._metrics.output_tokens += output_tokens
         self._metrics.cached_tokens += cached_tokens
 
-        # Calculate cost
-        costs = MODEL_COSTS.get(model, MODEL_COSTS.get("sonnet", {}))
-        input_cost = (input_tokens / 1_000_000) * costs.get("input", 3.0)
-        output_cost = (output_tokens / 1_000_000) * costs.get("output", 15.0)
-        call_cost = input_cost + output_cost
+        # Calculate cost using model-aware pricing
+        call_cost = estimate_call_cost(input_tokens, output_tokens, model)
 
         self._metrics.total_cost_usd += call_cost
         self._task_cost += call_cost

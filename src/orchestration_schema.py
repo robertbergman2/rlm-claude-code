@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
+from .cost_tracker import compute_affordable_tokens
 from .smart_router import ModelTier, QueryType
 
 
@@ -77,6 +78,38 @@ TIER_MODELS: dict[ModelTier, list[str]] = {
     ModelTier.POWERFUL: ["opus", "gpt-5.2", "o1"],
     ModelTier.CODE_SPECIALIST: ["gpt-5.2-codex", "sonnet"],
 }
+
+
+def compute_model_aware_tokens_per_depth(
+    model: str,
+    budget_dollars: float,
+    depth_budget: int,
+) -> int:
+    """
+    Compute tokens per depth level based on model cost and budget.
+
+    This replaces the hardcoded tokens_per_depth values with model-aware
+    computation that accounts for the actual cost differences between models.
+
+    Args:
+        model: Model name or alias
+        budget_dollars: Total budget in dollars
+        depth_budget: Number of depth levels
+
+    Returns:
+        Tokens per depth level that fits within budget
+    """
+    if depth_budget <= 0:
+        return 0
+
+    # Compute total affordable tokens for the budget
+    total_affordable = compute_affordable_tokens(budget_dollars, model)
+
+    # Divide by depth levels, with some buffer for overhead
+    tokens_per_depth = int(total_affordable / depth_budget * 0.9)  # 10% buffer
+
+    # Clamp to reasonable bounds
+    return max(5_000, min(tokens_per_depth, 200_000))
 
 
 @dataclass
@@ -189,6 +222,7 @@ class OrchestrationPlan:
         query_type: QueryType = QueryType.UNKNOWN,
         activation_reason: str = "mode_selected",
         available_models: list[str] | None = None,
+        use_model_aware_budget: bool = True,
     ) -> OrchestrationPlan:
         """
         Create plan from execution mode with sensible defaults.
@@ -198,6 +232,8 @@ class OrchestrationPlan:
             query_type: Type of query being processed
             activation_reason: Why RLM was activated
             available_models: Models that are available (have API keys)
+            use_model_aware_budget: If True, compute tokens_per_depth based on
+                                    model cost and budget (recommended)
 
         Returns:
             OrchestrationPlan configured for the mode
@@ -215,17 +251,31 @@ class OrchestrationPlan:
         primary = candidates[0] if candidates else "sonnet"
         fallbacks = candidates[1:3] if len(candidates) > 1 else []
 
+        depth_budget = defaults["depth_budget"]
+        max_cost = defaults["max_cost_dollars"]
+
+        # Compute model-aware tokens per depth if enabled
+        if use_model_aware_budget:
+            tokens_per_depth = compute_model_aware_tokens_per_depth(
+                model=primary,
+                budget_dollars=max_cost,
+                depth_budget=depth_budget,
+            )
+        else:
+            # Fall back to static defaults
+            tokens_per_depth = defaults["tokens_per_depth"]
+
         return cls(
             activate_rlm=True,
             activation_reason=activation_reason,
             model_tier=tier,
             primary_model=primary,
             fallback_chain=fallbacks,
-            depth_budget=defaults["depth_budget"],
-            tokens_per_depth=defaults["tokens_per_depth"],
+            depth_budget=depth_budget,
+            tokens_per_depth=tokens_per_depth,
             execution_mode=mode,
             tool_access=defaults["tool_access"],
-            max_cost_dollars=defaults["max_cost_dollars"],
+            max_cost_dollars=max_cost,
             query_type=query_type,
         )
 
@@ -295,4 +345,5 @@ __all__ = [
     "PlanAdjustment",
     "TIER_MODELS",
     "ToolAccessLevel",
+    "compute_model_aware_tokens_per_depth",
 ]

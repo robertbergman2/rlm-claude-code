@@ -15,8 +15,8 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
-from .api_client import ClaudeClient, Provider, init_client
-from .complexity_classifier import extract_complexity_signals, should_activate_rlm
+from .api_client import ClaudeClient, init_client
+from .complexity_classifier import should_activate_rlm
 from .cost_tracker import CostComponent
 from .orchestration_schema import (
     ExecutionMode,
@@ -26,7 +26,6 @@ from .orchestration_schema import (
 )
 from .smart_router import ModelTier, QueryClassifier, QueryType
 from .types import SessionContext
-
 
 # System prompt for orchestration decisions
 ORCHESTRATOR_SYSTEM_PROMPT = """You are an intelligent orchestration engine for RLM (Recursive Language Model) Claude Code.
@@ -250,7 +249,7 @@ class IntelligentOrchestrator:
     def _ensure_logger(self) -> Any:
         """Lazily initialize decision logger."""
         if self._decision_logger is None and self.config.log_decisions:
-            from .orchestration_logger import OrchestrationLogger, LoggerConfig
+            from .orchestration_logger import LoggerConfig, OrchestrationLogger
 
             log_config = LoggerConfig(
                 log_path=self.config.log_path,
@@ -263,7 +262,7 @@ class IntelligentOrchestrator:
     def _ensure_local_orchestrator(self) -> Any:
         """Lazily initialize local orchestrator."""
         if self._local_orchestrator is None:
-            from .local_orchestrator import LocalOrchestrator, RECOMMENDED_CONFIGS
+            from .local_orchestrator import RECOMMENDED_CONFIGS, LocalOrchestrator
 
             preset = self.config.local_model_preset
             if preset in RECOMMENDED_CONFIGS:
@@ -515,7 +514,7 @@ Output your decision as a JSON object."""
         try:
             data = json.loads(json_match.group())
         except json.JSONDecodeError as e:
-            raise ValueError(f"Invalid JSON in response: {e}")
+            raise ValueError(f"Invalid JSON in response: {e}") from e
 
         # Parse enums
         execution_mode = ExecutionMode(data.get("execution_mode", "balanced"))
@@ -784,9 +783,7 @@ Output your decision as a JSON object."""
         # Determine depth budget based on signals
         if "debugging_deep" in high_value_signals or "architectural" in high_value_signals:
             depth_budget = 3
-        elif "synthesis_required" in high_value_signals or "pattern_exhaustion" in high_value_signals:
-            depth_budget = 2
-        elif "discovery_required" in high_value_signals:
+        elif "synthesis_required" in high_value_signals or "pattern_exhaustion" in high_value_signals or "discovery_required" in high_value_signals:
             depth_budget = 2
         else:
             depth_budget = 1

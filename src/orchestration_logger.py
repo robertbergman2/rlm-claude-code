@@ -15,9 +15,7 @@ from __future__ import annotations
 
 import json
 import logging
-import os
-import time
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -286,7 +284,8 @@ class OrchestrationLogger:
 
         if self._log_path and self._log_path.exists():
             stats["log_size_mb"] = self._log_path.stat().st_size / (1024 * 1024)
-            stats["log_lines"] = sum(1 for _ in open(self._log_path))
+            with open(self._log_path) as f:
+                stats["log_lines"] = sum(1 for _ in f)
 
         return stats
 
@@ -439,6 +438,99 @@ class TrainingDataExporter:
             json.dump(info, f, indent=2)
 
         return len(examples)
+
+    def export_setfit(
+        self,
+        output_path: str,
+        label_type: str = "binary",
+    ) -> int:
+        """
+        Export to SetFit training format (JSONL with text/label).
+
+        SetFit expects:
+        - Binary: {"text": "...", "label": 0 or 1}
+        - Multi-class: {"text": "...", "label": "class_name"}
+
+        Args:
+            output_path: Path for output JSONL file
+            label_type: "binary" (activate_rlm), "complexity" (5-class), or "mode" (3-class)
+
+        Returns:
+            Number of examples exported.
+        """
+        decisions = self.load_decisions()
+        if not decisions:
+            return 0
+
+        output = Path(output_path).expanduser()
+        output.parent.mkdir(parents=True, exist_ok=True)
+
+        examples = []
+        for d in decisions:
+            # Build input text with context hints
+            text = d.query
+            if d.context_tokens > 50000:
+                text = f"[LARGE_CONTEXT] {text}"
+
+            # Select label based on type
+            if label_type == "binary":
+                label = 1 if d.activate_rlm else 0
+            elif label_type == "complexity":
+                # Map activation_reason to complexity level
+                complexity_map = {
+                    "architectural": "unbounded",
+                    "pattern_exhaustion": "unbounded",
+                    "discovery_required": "complex",
+                    "synthesis_required": "complex",
+                    "debugging_deep": "complex",
+                    "uncertainty_high": "moderate",
+                    "knowledge_retrieval": "trivial",
+                    "conversational": "trivial",
+                    "narrow_scope": "simple",
+                }
+                # Try to infer from activation_reason, fallback to execution_mode
+                reason = d.activation_reason.lower()
+                if reason in complexity_map:
+                    label = complexity_map[reason]
+                elif d.execution_mode == "thorough":
+                    label = "complex"
+                elif d.execution_mode == "fast":
+                    label = "simple"
+                else:
+                    label = "moderate"
+            elif label_type == "mode":
+                label = d.execution_mode
+            else:
+                raise ValueError(f"Unknown label_type: {label_type}")
+
+            examples.append({"text": text, "label": label})
+
+        # Write JSONL
+        with open(output, "w") as f:
+            for ex in examples:
+                f.write(json.dumps(ex) + "\n")
+
+        # Write metadata
+        meta_path = output.with_suffix(".meta.json")
+        meta = {
+            "format": "setfit",
+            "label_type": label_type,
+            "total_examples": len(examples),
+            "label_distribution": self._count_labels(examples),
+            "source_log": str(self.log_path),
+        }
+        with open(meta_path, "w") as f:
+            json.dump(meta, f, indent=2)
+
+        return len(examples)
+
+    def _count_labels(self, examples: list[dict]) -> dict[str, int]:
+        """Count label distribution."""
+        counts: dict[str, int] = {}
+        for ex in examples:
+            label = str(ex["label"])
+            counts[label] = counts.get(label, 0) + 1
+        return counts
 
     def get_label_distribution(self) -> dict[str, dict[str, int]]:
         """Get distribution of labels for analysis."""

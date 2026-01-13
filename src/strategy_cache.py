@@ -233,8 +233,7 @@ class FeatureExtractor:
         "both", "few", "more", "most", "other", "some", "such", "no",
         "nor", "not", "only", "own", "same", "so", "than", "too", "very",
         "just", "also", "now", "and", "but", "or", "if", "because",
-        "until", "while", "although", "though", "after", "before",
-        "this", "that", "these", "those", "it", "its", "i", "me", "my",
+        "until", "while", "although", "though", "this", "that", "these", "those", "it", "its", "i", "me", "my",
         "you", "your", "he", "him", "his", "she", "her", "we", "us",
         "our", "they", "them", "their", "what", "which", "who", "whom",
     }

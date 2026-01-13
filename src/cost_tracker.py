@@ -10,7 +10,25 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
+from functools import lru_cache
 from typing import Any
+
+# tiktoken for accurate token counting (Claude uses cl100k_base encoding)
+try:
+    import tiktoken
+
+    _TIKTOKEN_AVAILABLE = True
+except ImportError:
+    tiktoken = None  # type: ignore[assignment]
+    _TIKTOKEN_AVAILABLE = False
+
+
+@lru_cache(maxsize=1)
+def _get_encoding() -> Any:
+    """Get cached tiktoken encoding (cl100k_base, same as Claude/GPT-4)."""
+    if not _TIKTOKEN_AVAILABLE:
+        return None
+    return tiktoken.get_encoding("cl100k_base")
 
 
 class CostComponent(Enum):
@@ -24,17 +42,137 @@ class CostComponent(Enum):
     TOOL_OUTPUT = "tool_output"
 
 
-# Token costs per model (per 1M tokens as of spec date)
+# Token costs per model (per 1M tokens, Jan 2026 pricing)
 # Input / Output costs in dollars
 MODEL_COSTS: dict[str, dict[str, float]] = {
+    # Claude 4.5 Opus (Jan 2026)
     "claude-opus-4-5-20251101": {"input": 15.0, "output": 75.0},
+    # Claude 4 Sonnet (Jan 2026)
     "claude-sonnet-4-20250514": {"input": 3.0, "output": 15.0},
-    "claude-haiku-4-5-20251001": {"input": 0.80, "output": 4.0},
-    # Fallbacks for older model names
+    # Claude 3.5 Haiku (Jan 2026) - Note: Haiku 4.5 is more expensive than Haiku 3
+    "claude-haiku-4-5-20251001": {"input": 1.0, "output": 5.0},
+    # Claude 3 Haiku (legacy, cheaper)
+    "claude-3-haiku-20240307": {"input": 0.25, "output": 1.25},
+    # Short aliases for convenience
     "opus": {"input": 15.0, "output": 75.0},
     "sonnet": {"input": 3.0, "output": 15.0},
-    "haiku": {"input": 0.80, "output": 4.0},
+    "haiku": {"input": 1.0, "output": 5.0},  # Default to Haiku 4.5 pricing
+    "haiku-3": {"input": 0.25, "output": 1.25},  # Legacy Haiku 3
+    # OpenAI models (for multi-provider support)
+    "gpt-4o": {"input": 2.5, "output": 10.0},
+    "gpt-4o-mini": {"input": 0.15, "output": 0.60},
+    "o1": {"input": 15.0, "output": 60.0},
+    "o3-mini": {"input": 1.10, "output": 4.40},
 }
+
+# Default model for cost calculations when model is unknown
+DEFAULT_MODEL_FOR_COSTS = "sonnet"
+
+
+def get_model_costs(model: str) -> dict[str, float]:
+    """
+    Get cost rates for a model.
+
+    Args:
+        model: Model name or alias
+
+    Returns:
+        Dict with 'input' and 'output' costs per 1M tokens
+    """
+    # Try exact match first
+    if model in MODEL_COSTS:
+        return MODEL_COSTS[model]
+
+    # Try matching by model family (e.g., "claude-sonnet" matches "sonnet")
+    model_lower = model.lower()
+    for key, costs in MODEL_COSTS.items():
+        if key in model_lower or model_lower in key:
+            return costs
+
+    # Default to sonnet pricing
+    return MODEL_COSTS[DEFAULT_MODEL_FOR_COSTS]
+
+
+def estimate_call_cost(
+    input_tokens: int,
+    output_tokens: int,
+    model: str,
+) -> float:
+    """
+    Estimate cost for a single API call.
+
+    Args:
+        input_tokens: Number of input tokens
+        output_tokens: Number of output tokens
+        model: Model name or alias
+
+    Returns:
+        Estimated cost in dollars
+    """
+    costs = get_model_costs(model)
+    input_cost = (input_tokens / 1_000_000) * costs["input"]
+    output_cost = (output_tokens / 1_000_000) * costs["output"]
+    return input_cost + output_cost
+
+
+def compute_affordable_tokens(
+    budget_dollars: float,
+    model: str,
+    input_output_ratio: float = 0.7,
+) -> int:
+    """
+    Compute how many tokens can be afforded with a given budget.
+
+    Args:
+        budget_dollars: Available budget in dollars
+        model: Model name or alias
+        input_output_ratio: Expected ratio of input to total tokens (default 0.7)
+
+    Returns:
+        Total tokens (input + output) that can be afforded
+    """
+    costs = get_model_costs(model)
+
+    # Weighted average cost per token
+    input_weight = input_output_ratio
+    output_weight = 1 - input_output_ratio
+    avg_cost_per_token = (
+        input_weight * costs["input"] + output_weight * costs["output"]
+    ) / 1_000_000
+
+    if avg_cost_per_token <= 0:
+        return 1_000_000  # Fallback to 1M tokens if cost is zero
+
+    return int(budget_dollars / avg_cost_per_token)
+
+
+def compute_affordable_depth(
+    budget_dollars: float,
+    model: str,
+    avg_tokens_per_call: int = 5000,
+    avg_output_tokens: int = 1500,
+) -> int:
+    """
+    Compute maximum affordable recursion depth.
+
+    Args:
+        budget_dollars: Available budget in dollars
+        model: Model name or alias
+        avg_tokens_per_call: Average input tokens per call
+        avg_output_tokens: Average output tokens per call
+
+    Returns:
+        Maximum affordable depth (capped at 3)
+    """
+    cost_per_call = estimate_call_cost(avg_tokens_per_call, avg_output_tokens, model)
+    if cost_per_call <= 0:
+        return 3  # Max depth if cost is zero
+
+    affordable_calls = int(budget_dollars / cost_per_call)
+    # Assume ~3 calls per depth level on average
+    affordable_depth = affordable_calls // 3
+
+    return min(affordable_depth, 3)  # Cap at max depth 3
 
 
 @dataclass
@@ -62,10 +200,7 @@ class TokenUsage:
 
     def estimate_cost(self) -> float:
         """Estimate cost in dollars."""
-        costs = MODEL_COSTS.get(self.model, MODEL_COSTS.get("sonnet", {}))
-        input_cost = (self.input_tokens / 1_000_000) * costs.get("input", 3.0)
-        output_cost = (self.output_tokens / 1_000_000) * costs.get("output", 15.0)
-        return input_cost + output_cost
+        return estimate_call_cost(self.input_tokens, self.output_tokens, self.model)
 
 
 @dataclass
@@ -86,10 +221,9 @@ class CostEstimate:
     @property
     def estimated_cost(self) -> float:
         """Estimated cost in dollars."""
-        costs = MODEL_COSTS.get(self.model, MODEL_COSTS.get("sonnet", {}))
-        input_cost = (self.estimated_input_tokens / 1_000_000) * costs.get("input", 3.0)
-        output_cost = (self.estimated_output_tokens / 1_000_000) * costs.get("output", 15.0)
-        return input_cost + output_cost
+        return estimate_call_cost(
+            self.estimated_input_tokens, self.estimated_output_tokens, self.model
+        )
 
 
 @dataclass
@@ -193,6 +327,7 @@ class CostTracker:
         model: str,
         component: CostComponent,
         include_overhead: bool = True,
+        prompt_text: str | None = None,
     ) -> CostEstimate:
         """
         Estimate cost before execution.
@@ -200,31 +335,46 @@ class CostTracker:
         Implements: Spec §8.1 Cost estimation before execution
 
         Args:
-            prompt_length: Length of prompt in characters
+            prompt_length: Length of prompt in characters (used if prompt_text not provided)
             expected_output_length: Expected output length in characters
             model: Model to use
             component: Component making the call
             include_overhead: Include system prompt overhead
+            prompt_text: Actual prompt text for accurate tiktoken counting
 
         Returns:
             CostEstimate with token and dollar estimates
         """
-        # Estimate tokens from characters (roughly 4 chars per token)
-        estimated_input = prompt_length // 4
+        # Use tiktoken for accurate counting if prompt_text provided
+        if prompt_text is not None:
+            estimated_input = estimate_tokens_accurate(prompt_text)
+        else:
+            # Fallback to character-based estimation
+            estimated_input = prompt_length // 4
 
         # Add overhead for system prompts
         if include_overhead:
             overhead = self._get_overhead_tokens(component)
             estimated_input += overhead
 
+        # Output estimation is always approximate (we don't know output yet)
         estimated_output = expected_output_length // 4
 
-        # Confidence based on how well we can estimate
-        confidence = 0.7  # Base confidence
+        # Confidence based on estimation method and component
+        if prompt_text is not None and _TIKTOKEN_AVAILABLE:
+            # Accurate input counting with tiktoken
+            base_confidence = 0.85
+        else:
+            # Character-based estimation
+            base_confidence = 0.6
+
+        # Adjust for component predictability
         if component == CostComponent.RECURSIVE_CALL:
-            confidence = 0.5  # Less predictable
+            confidence = base_confidence * 0.7  # Less predictable
         elif component == CostComponent.SUMMARIZATION:
-            confidence = 0.8  # More predictable
+            confidence = min(0.95, base_confidence * 1.1)  # More predictable
+        else:
+            confidence = base_confidence
 
         return CostEstimate(
             estimated_input_tokens=estimated_input,
@@ -398,15 +548,12 @@ class CostTracker:
         breakdown: dict[str, dict[str, Any]] = {}
 
         for model, tokens in self._model_tokens.items():
-            costs = MODEL_COSTS.get(model, MODEL_COSTS.get("sonnet", {}))
-            input_cost = (tokens["input"] / 1_000_000) * costs.get("input", 3.0)
-            output_cost = (tokens["output"] / 1_000_000) * costs.get("output", 15.0)
-
+            cost = estimate_call_cost(tokens["input"], tokens["output"], model)
             breakdown[model] = {
                 "input_tokens": tokens["input"],
                 "output_tokens": tokens["output"],
                 "total_tokens": tokens["input"] + tokens["output"],
-                "cost": input_cost + output_cost,
+                "cost": cost,
             }
 
         return breakdown
@@ -486,12 +633,30 @@ class CostTracker:
 # Token estimation utilities
 
 
+def estimate_tokens_accurate(text: str) -> int:
+    """
+    Accurately count tokens using tiktoken (cl100k_base encoding).
+
+    Falls back to ~4 chars/token heuristic if tiktoken unavailable.
+
+    Args:
+        text: Text to tokenize
+
+    Returns:
+        Token count (accurate if tiktoken available, estimated otherwise)
+    """
+    enc = _get_encoding()
+    if enc is not None:
+        return len(enc.encode(text))
+    # Fallback: ~4 characters per token (conservative estimate)
+    return len(text) // 4
+
+
 def estimate_tokens(text: str) -> int:
     """
     Estimate token count for text.
 
-    Uses simple heuristic of ~4 characters per token.
-    For more accurate counts, use a proper tokenizer.
+    Uses tiktoken if available, otherwise ~4 characters per token.
 
     Args:
         text: Text to estimate
@@ -499,7 +664,12 @@ def estimate_tokens(text: str) -> int:
     Returns:
         Estimated token count
     """
-    return len(text) // 4
+    return estimate_tokens_accurate(text)
+
+
+def is_tiktoken_available() -> bool:
+    """Check if tiktoken is available for accurate token counting."""
+    return _TIKTOKEN_AVAILABLE
 
 
 def estimate_context_tokens(
@@ -555,8 +725,16 @@ __all__ = [
     "CostComponent",
     "CostEstimate",
     "CostTracker",
+    "DEFAULT_MODEL_FOR_COSTS",
+    "MODEL_COSTS",
     "TokenUsage",
+    "compute_affordable_depth",
+    "compute_affordable_tokens",
+    "estimate_call_cost",
     "estimate_context_tokens",
     "estimate_tokens",
+    "estimate_tokens_accurate",
     "get_cost_tracker",
+    "get_model_costs",
+    "is_tiktoken_available",
 ]

@@ -27,7 +27,7 @@ from .trajectory import (
     TrajectoryEventType,
     TrajectoryRenderer,
 )
-from .types import DeferredBatch, DeferredOperation, SessionContext
+from .types import DeferredOperation, SessionContext
 
 
 @dataclass
@@ -388,98 +388,90 @@ class RLMOrchestrator:
         - Individual recursive_query/summarize operations
         - Parallel batch operations (llm_batch)
 
+        All operations are executed in parallel with bounded concurrency (Semaphore(5))
+        to prevent API overload while maximizing throughput.
+
         Uses RecursiveREPL when available for proper depth management and cost tracking.
         """
         ops, batches = repl.get_pending_operations()
 
-        # Process individual operations sequentially
-        for op in ops:
-            # Emit recurse start event
-            start_event = TrajectoryEvent(
-                type=TrajectoryEventType.RECURSE_START,
-                depth=depth + 1,
-                content=f"{op.operation_type}: {op.query[:100]}",
-                metadata={"operation_id": op.operation_id},
-            )
-            await trajectory.emit(start_event)
-            yield start_event
-
-            # Use RecursiveREPL if available for depth/cost tracking
-            try:
-                if recursive_handler:
-                    result = await recursive_handler.recursive_query(
-                        query=op.query,
-                        context=op.context,
-                        spawn_repl=op.spawn_repl,
-                    )
-                else:
-                    result = await client.recursive_query(op.query, op.context)
-            except Exception as e:
-                result = f"[Error: {e}]"
-
-            # Resolve the operation
-            repl.resolve_operation(op.operation_id, result)
-
-            # Emit recurse end event
-            end_event = TrajectoryEvent(
-                type=TrajectoryEventType.RECURSE_END,
-                depth=depth + 1,
-                content=str(result)[:200],
-                metadata={"operation_id": op.operation_id},
-            )
-            await trajectory.emit(end_event)
-            yield end_event
-
-        # Process batches in parallel
+        # Collect all operations for parallel execution
+        all_ops: list[DeferredOperation] = list(ops)
         for batch in batches:
-            # Emit batch start event
-            batch_start = TrajectoryEvent(
-                type=TrajectoryEventType.RECURSE_START,
-                depth=depth + 1,
-                content=f"Parallel batch: {len(batch.operations)} queries",
-                metadata={"batch_id": batch.batch_id},
-            )
-            await trajectory.emit(batch_start)
-            yield batch_start
+            all_ops.extend(batch.operations)
 
-            # Execute all batch operations in parallel
-            async def execute_op(op: DeferredOperation) -> str:
+        if not all_ops:
+            return
+
+        # Emit start event for parallel processing
+        total_ops = len(all_ops)
+        start_event = TrajectoryEvent(
+            type=TrajectoryEventType.RECURSE_START,
+            depth=depth + 1,
+            content=f"Parallel execution: {total_ops} operations (max 5 concurrent)",
+            metadata={
+                "individual_ops": len(ops),
+                "batch_ops": sum(len(b.operations) for b in batches),
+                "batch_count": len(batches),
+            },
+        )
+        await trajectory.emit(start_event)
+        yield start_event
+
+        # Bounded parallel execution with Semaphore(5)
+        semaphore = asyncio.Semaphore(5)
+
+        async def execute_op_bounded(op: DeferredOperation) -> tuple[str, str]:
+            """Execute operation with bounded concurrency."""
+            async with semaphore:
                 try:
                     if recursive_handler:
-                        return await recursive_handler.recursive_query(
+                        result = await recursive_handler.recursive_query(
                             query=op.query,
                             context=op.context,
                             spawn_repl=op.spawn_repl,
                         )
                     else:
-                        return await client.recursive_query(op.query, op.context)
+                        result = await client.recursive_query(op.query, op.context)
+                    return op.operation_id, result
                 except Exception as e:
-                    return f"[Error: {e}]"
+                    return op.operation_id, f"[Error: {e}]"
 
-            # Gather all results concurrently
-            results = await asyncio.gather(
-                *[execute_op(op) for op in batch.operations]
-            )
+        # Execute all operations in parallel with bounded concurrency
+        results = await asyncio.gather(*[execute_op_bounded(op) for op in all_ops])
 
-            # Resolve the batch
-            repl.resolve_batch(batch.batch_id, list(results))
+        # Build result map
+        result_map: dict[str, str] = dict(results)
 
-            # Emit batch end event with cost summary if using RecursiveREPL
-            metadata: dict[str, Any] = {
-                "batch_id": batch.batch_id,
-                "result_count": len(results),
-            }
-            if recursive_handler:
-                metadata["cost_summary"] = recursive_handler.get_cost_summary()
+        # Resolve individual operations
+        for op in ops:
+            result = result_map.get(op.operation_id, "[Missing result]")
+            repl.resolve_operation(op.operation_id, result)
 
-            batch_end = TrajectoryEvent(
-                type=TrajectoryEventType.RECURSE_END,
-                depth=depth + 1,
-                content=f"Batch complete: {len(results)} results",
-                metadata=metadata,
-            )
-            await trajectory.emit(batch_end)
-            yield batch_end
+        # Resolve batches
+        for batch in batches:
+            batch_results = [
+                result_map.get(op.operation_id, "[Missing result]")
+                for op in batch.operations
+            ]
+            repl.resolve_batch(batch.batch_id, batch_results)
+
+        # Emit completion event with cost summary
+        metadata: dict[str, Any] = {
+            "total_operations": total_ops,
+            "completed": len(results),
+        }
+        if recursive_handler:
+            metadata["cost_summary"] = recursive_handler.get_cost_summary()
+
+        end_event = TrajectoryEvent(
+            type=TrajectoryEventType.RECURSE_END,
+            depth=depth + 1,
+            content=f"Parallel execution complete: {len(results)}/{total_ops} operations",
+            metadata=metadata,
+        )
+        await trajectory.emit(end_event)
+        yield end_event
 
 
 async def main():

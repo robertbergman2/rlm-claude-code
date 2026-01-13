@@ -9,11 +9,11 @@ isolation and permission controls.
 
 from __future__ import annotations
 
-import asyncio
 import subprocess
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from .orchestration_schema import ToolAccessLevel
 
@@ -54,15 +54,7 @@ class ToolPermissions:
     @classmethod
     def from_access_level(cls, level: ToolAccessLevel) -> ToolPermissions:
         """Create permissions from access level."""
-        if level == ToolAccessLevel.NONE:
-            return cls(
-                access_level=level,
-                allow_bash=False,
-                allow_file_read=False,
-                allow_file_write=False,
-                allow_search=False,
-            )
-        elif level == ToolAccessLevel.REPL_ONLY:
+        if level == ToolAccessLevel.NONE or level == ToolAccessLevel.REPL_ONLY:
             return cls(
                 access_level=level,
                 allow_bash=False,

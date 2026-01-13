@@ -69,6 +69,42 @@ class EvolutionLogEntry:
     reasoning: str | None
 
 
+@dataclass
+class ConfidenceUpdate:
+    """
+    Entry in the confidence updates audit log.
+
+    Implements: Phase 3 Memory Integration
+    """
+
+    id: int
+    node_id: str
+    old_confidence: float
+    new_confidence: float
+    trigger_type: str  # outcome, decay, consolidation, manual
+    trigger_id: str | None
+    timestamp: int
+
+
+# Valid trigger types for confidence updates
+VALID_CONFIDENCE_TRIGGERS = frozenset({"outcome", "decay", "consolidation", "manual"})
+
+
+@dataclass
+class SearchResult:
+    """
+    Result from FTS5 full-text search.
+
+    Implements: Phase 4 Massive Context (SPEC-01.03)
+    """
+
+    node_id: str
+    content: str
+    node_type: str
+    bm25_score: float
+    snippet: str | None = None  # Highlighted snippet if available
+
+
 # =============================================================================
 # Schema Definition
 # =============================================================================
@@ -119,6 +155,17 @@ CREATE TABLE IF NOT EXISTS evolution_log (
     reasoning TEXT
 );
 
+-- Confidence updates audit table (Phase 3: Memory Integration)
+CREATE TABLE IF NOT EXISTS confidence_updates (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    node_id TEXT NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+    old_confidence REAL NOT NULL,
+    new_confidence REAL NOT NULL,
+    trigger_type TEXT NOT NULL CHECK(trigger_type IN ('outcome', 'decay', 'consolidation', 'manual')),
+    trigger_id TEXT,
+    timestamp INTEGER DEFAULT (strftime('%s', 'now') * 1000)
+);
+
 -- Indexes for performance
 CREATE INDEX IF NOT EXISTS idx_nodes_tier ON nodes(tier);
 CREATE INDEX IF NOT EXISTS idx_nodes_type ON nodes(type);
@@ -126,6 +173,31 @@ CREATE INDEX IF NOT EXISTS idx_nodes_confidence ON nodes(confidence);
 CREATE INDEX IF NOT EXISTS idx_nodes_last_accessed ON nodes(last_accessed);
 CREATE INDEX IF NOT EXISTS idx_membership_node ON membership(node_id);
 CREATE INDEX IF NOT EXISTS idx_membership_edge ON membership(hyperedge_id);
+CREATE INDEX IF NOT EXISTS idx_confidence_updates_node ON confidence_updates(node_id);
+CREATE INDEX IF NOT EXISTS idx_confidence_updates_trigger ON confidence_updates(trigger_type);
+
+-- FTS5 full-text search index (Phase 4: Massive Context)
+-- Uses Porter stemming for better matching and BM25 ranking
+CREATE VIRTUAL TABLE IF NOT EXISTS content_fts USING fts5(
+    node_id UNINDEXED,
+    content,
+    type UNINDEXED,
+    tokenize='porter'
+);
+
+-- Triggers to keep FTS index in sync with nodes table
+CREATE TRIGGER IF NOT EXISTS nodes_fts_insert AFTER INSERT ON nodes BEGIN
+    INSERT INTO content_fts(node_id, content, type) VALUES (NEW.id, NEW.content, NEW.type);
+END;
+
+CREATE TRIGGER IF NOT EXISTS nodes_fts_update AFTER UPDATE OF content ON nodes BEGIN
+    DELETE FROM content_fts WHERE node_id = OLD.id;
+    INSERT INTO content_fts(node_id, content, type) VALUES (NEW.id, NEW.content, NEW.type);
+END;
+
+CREATE TRIGGER IF NOT EXISTS nodes_fts_delete AFTER DELETE ON nodes BEGIN
+    DELETE FROM content_fts WHERE node_id = OLD.id;
+END;
 """
 
 
@@ -160,6 +232,29 @@ class MemoryStore:
     VALID_ROLES = frozenset(
         {"subject", "object", "context", "participant", "cause", "effect"}
     )
+
+    # Valid edge labels for reasoning/memory integration
+    # Decision flow labels (SPEC-04)
+    DECISION_LABELS = frozenset({
+        "spawns",      # goal → decision
+        "considers",   # decision → option
+        "chooses",     # decision → option (selected)
+        "rejects",     # decision → option (rejected)
+        "implements",  # option → action
+        "produces",    # action → outcome
+        "informs",     # observation → any
+    })
+
+    # Evidence linking labels (for bidirectional fact ↔ decision linking)
+    EVIDENCE_LABELS = frozenset({
+        "supports",     # fact → option (evidence for a choice)
+        "contradicts",  # fact → option (evidence against a choice)
+        "validates",    # outcome → fact (outcome confirms fact)
+        "invalidates",  # outcome → fact (outcome refutes fact)
+    })
+
+    # All valid edge labels
+    VALID_EDGE_LABELS = DECISION_LABELS | EVIDENCE_LABELS
 
     def __init__(self, db_path: str | None = None):
         """
@@ -750,6 +845,165 @@ class MemoryStore:
             conn.close()
 
     # =========================================================================
+    # Evidence Linking (for Memory + Reasoning Integration)
+    # =========================================================================
+
+    def create_evidence_edge(
+        self,
+        label: str,
+        source_id: str,
+        target_id: str,
+        weight: float = 1.0,
+    ) -> str:
+        """
+        Create an evidence edge linking facts to decisions or outcomes to facts.
+
+        Evidence labels:
+        - supports: fact → option (evidence for a choice)
+        - contradicts: fact → option (evidence against a choice)
+        - validates: outcome → fact (outcome confirms fact)
+        - invalidates: outcome → fact (outcome refutes fact)
+
+        Args:
+            label: Evidence label (supports, contradicts, validates, invalidates)
+            source_id: Source node ID (fact or outcome)
+            target_id: Target node ID (option or fact)
+            weight: Edge weight representing evidence strength (0.0-1.0)
+
+        Returns:
+            Edge ID
+
+        Raises:
+            ValueError: If label is not a valid evidence label
+        """
+        if label not in self.EVIDENCE_LABELS:
+            raise ValueError(
+                f"Invalid evidence label: {label}. Must be one of: {self.EVIDENCE_LABELS}"
+            )
+
+        return self.create_edge(
+            edge_type="relation",
+            label=label,
+            members=[
+                {"node_id": source_id, "role": "subject", "position": 0},
+                {"node_id": target_id, "role": "object", "position": 1},
+            ],
+            weight=weight,
+        )
+
+    def get_supporting_facts(self, option_id: str) -> list[tuple[str, float]]:
+        """
+        Get facts that support an option.
+
+        Args:
+            option_id: The option node ID
+
+        Returns:
+            List of (fact_id, weight) tuples
+        """
+        return self._get_evidence_for_target(option_id, "supports")
+
+    def get_contradicting_facts(self, option_id: str) -> list[tuple[str, float]]:
+        """
+        Get facts that contradict an option.
+
+        Args:
+            option_id: The option node ID
+
+        Returns:
+            List of (fact_id, weight) tuples
+        """
+        return self._get_evidence_for_target(option_id, "contradicts")
+
+    def get_validating_outcomes(self, fact_id: str) -> list[tuple[str, float]]:
+        """
+        Get outcomes that validate a fact.
+
+        Args:
+            fact_id: The fact node ID
+
+        Returns:
+            List of (outcome_id, weight) tuples
+        """
+        return self._get_evidence_for_target(fact_id, "validates")
+
+    def get_invalidating_outcomes(self, fact_id: str) -> list[tuple[str, float]]:
+        """
+        Get outcomes that invalidate a fact.
+
+        Args:
+            fact_id: The fact node ID
+
+        Returns:
+            List of (outcome_id, weight) tuples
+        """
+        return self._get_evidence_for_target(fact_id, "invalidates")
+
+    def _get_evidence_for_target(
+        self, target_id: str, label: str
+    ) -> list[tuple[str, float]]:
+        """
+        Get evidence nodes pointing to a target with a specific label.
+
+        Args:
+            target_id: Target node ID
+            label: Evidence label
+
+        Returns:
+            List of (source_id, weight) tuples
+        """
+        conn = self._get_connection()
+        try:
+            cursor = conn.execute(
+                """
+                SELECT m_source.node_id, h.weight
+                FROM hyperedges h
+                JOIN membership m_target ON h.id = m_target.hyperedge_id
+                JOIN membership m_source ON h.id = m_source.hyperedge_id
+                WHERE h.label = ?
+                  AND m_target.node_id = ?
+                  AND m_target.role = 'object'
+                  AND m_source.role = 'subject'
+                """,
+                (label, target_id),
+            )
+            return [(row[0], row[1]) for row in cursor.fetchall()]
+        finally:
+            conn.close()
+
+    def get_evidence_targets(
+        self, source_id: str, label: str
+    ) -> list[tuple[str, float]]:
+        """
+        Get nodes that a source provides evidence for.
+
+        Args:
+            source_id: Source node ID (fact or outcome)
+            label: Evidence label
+
+        Returns:
+            List of (target_id, weight) tuples
+        """
+        conn = self._get_connection()
+        try:
+            cursor = conn.execute(
+                """
+                SELECT m_target.node_id, h.weight
+                FROM hyperedges h
+                JOIN membership m_source ON h.id = m_source.hyperedge_id
+                JOIN membership m_target ON h.id = m_target.hyperedge_id
+                WHERE h.label = ?
+                  AND m_source.node_id = ?
+                  AND m_source.role = 'subject'
+                  AND m_target.role = 'object'
+                """,
+                (label, source_id),
+            )
+            return [(row[0], row[1]) for row in cursor.fetchall()]
+        finally:
+            conn.close()
+
+    # =========================================================================
     # Evolution Log (SPEC-02.19)
     # =========================================================================
 
@@ -848,6 +1102,197 @@ class MemoryStore:
         finally:
             conn.close()
 
+    # =========================================================================
+    # Confidence Update Logging (Phase 3: Memory Integration)
+    # =========================================================================
+
+    def log_confidence_update(
+        self,
+        node_id: str,
+        old_confidence: float,
+        new_confidence: float,
+        trigger_type: str,
+        trigger_id: str | None = None,
+    ) -> int:
+        """
+        Log a confidence update to the audit trail.
+
+        Args:
+            node_id: Node ID being updated
+            old_confidence: Previous confidence value
+            new_confidence: New confidence value
+            trigger_type: What caused this update (outcome, decay, consolidation, manual)
+            trigger_id: Optional ID of the trigger (e.g., outcome_id for outcome triggers)
+
+        Returns:
+            ID of the log entry
+        """
+        if trigger_type not in VALID_CONFIDENCE_TRIGGERS:
+            raise ValueError(
+                f"Invalid trigger type: {trigger_type}. "
+                f"Must be one of: {VALID_CONFIDENCE_TRIGGERS}"
+            )
+
+        conn = self._get_connection()
+        try:
+            cursor = conn.execute(
+                """
+                INSERT INTO confidence_updates
+                (node_id, old_confidence, new_confidence, trigger_type, trigger_id)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (node_id, old_confidence, new_confidence, trigger_type, trigger_id),
+            )
+            conn.commit()
+            return cursor.lastrowid or 0
+        finally:
+            conn.close()
+
+    def get_confidence_history(
+        self,
+        node_id: str,
+        limit: int | None = None,
+    ) -> list[ConfidenceUpdate]:
+        """
+        Get confidence update history for a node.
+
+        Args:
+            node_id: Node ID to get history for
+            limit: Maximum number of entries to return (most recent first)
+
+        Returns:
+            List of ConfidenceUpdate entries, most recent first
+        """
+        conn = self._get_connection()
+        conn.row_factory = sqlite3.Row
+        try:
+            query = """
+                SELECT id, node_id, old_confidence, new_confidence,
+                       trigger_type, trigger_id, timestamp
+                FROM confidence_updates
+                WHERE node_id = ?
+                ORDER BY timestamp DESC, id DESC
+            """
+            if limit:
+                query += f" LIMIT {limit}"
+
+            cursor = conn.execute(query, (node_id,))
+            return [
+                ConfidenceUpdate(
+                    id=row["id"],
+                    node_id=row["node_id"],
+                    old_confidence=row["old_confidence"],
+                    new_confidence=row["new_confidence"],
+                    trigger_type=row["trigger_type"],
+                    trigger_id=row["trigger_id"],
+                    timestamp=row["timestamp"],
+                )
+                for row in cursor.fetchall()
+            ]
+        finally:
+            conn.close()
+
+    def get_confidence_updates_by_trigger(
+        self,
+        trigger_type: str,
+        trigger_id: str | None = None,
+    ) -> list[ConfidenceUpdate]:
+        """
+        Get all confidence updates for a specific trigger type/ID.
+
+        Args:
+            trigger_type: Type of trigger (outcome, decay, consolidation, manual)
+            trigger_id: Optional specific trigger ID
+
+        Returns:
+            List of ConfidenceUpdate entries
+        """
+        conn = self._get_connection()
+        conn.row_factory = sqlite3.Row
+        try:
+            if trigger_id:
+                cursor = conn.execute(
+                    """
+                    SELECT id, node_id, old_confidence, new_confidence,
+                           trigger_type, trigger_id, timestamp
+                    FROM confidence_updates
+                    WHERE trigger_type = ? AND trigger_id = ?
+                    ORDER BY timestamp DESC, id DESC
+                    """,
+                    (trigger_type, trigger_id),
+                )
+            else:
+                cursor = conn.execute(
+                    """
+                    SELECT id, node_id, old_confidence, new_confidence,
+                           trigger_type, trigger_id, timestamp
+                    FROM confidence_updates
+                    WHERE trigger_type = ?
+                    ORDER BY timestamp DESC, id DESC
+                    """,
+                    (trigger_type,),
+                )
+
+            return [
+                ConfidenceUpdate(
+                    id=row["id"],
+                    node_id=row["node_id"],
+                    old_confidence=row["old_confidence"],
+                    new_confidence=row["new_confidence"],
+                    trigger_type=row["trigger_type"],
+                    trigger_id=row["trigger_id"],
+                    timestamp=row["timestamp"],
+                )
+                for row in cursor.fetchall()
+            ]
+        finally:
+            conn.close()
+
+    def get_confidence_drift_report(
+        self,
+        node_id: str,
+    ) -> dict[str, Any]:
+        """
+        Get a summary of confidence changes for a node.
+
+        Args:
+            node_id: Node ID to analyze
+
+        Returns:
+            Dict with statistics about confidence changes
+        """
+        history = self.get_confidence_history(node_id)
+
+        if not history:
+            return {
+                "node_id": node_id,
+                "total_updates": 0,
+                "current_confidence": None,
+                "initial_confidence": None,
+                "total_drift": 0.0,
+                "updates_by_trigger": {},
+            }
+
+        # Count updates by trigger type
+        updates_by_trigger: dict[str, int] = {}
+        for update in history:
+            updates_by_trigger[update.trigger_type] = (
+                updates_by_trigger.get(update.trigger_type, 0) + 1
+            )
+
+        # History is ordered by timestamp DESC, so first is most recent
+        current = history[0].new_confidence
+        initial = history[-1].old_confidence
+
+        return {
+            "node_id": node_id,
+            "total_updates": len(history),
+            "current_confidence": current,
+            "initial_confidence": initial,
+            "total_drift": current - initial,
+            "updates_by_trigger": updates_by_trigger,
+        }
+
     def _set_last_accessed(self, node_id: str, timestamp: Any) -> bool:
         """
         Set the last_accessed time for a node (for testing).
@@ -918,6 +1363,175 @@ class MemoryStore:
             conn.close()
 
     # =========================================================================
+    # FTS5 Full-Text Search (Phase 4: Massive Context)
+    # =========================================================================
+
+    def search(
+        self,
+        query: str,
+        limit: int = 20,
+        node_type: str | None = None,
+        min_confidence: float | None = None,
+    ) -> list[SearchResult]:
+        """
+        Search node content using FTS5 with BM25 ranking.
+
+        Implements: Phase 4 Massive Context (SPEC-01.03)
+
+        Args:
+            query: Search query (supports FTS5 syntax: AND, OR, NOT, prefix*, "phrase")
+            limit: Maximum results to return
+            node_type: Filter by node type (entity, fact, experience, decision, snippet)
+            min_confidence: Minimum confidence threshold
+
+        Returns:
+            List of SearchResult objects sorted by BM25 relevance
+        """
+        if not query or not query.strip():
+            return []
+
+        conn = self._get_connection()
+        try:
+            # Build query with optional filters
+            # BM25 scoring: lower is better, so we negate for DESC ordering
+            # Always join with nodes table to exclude archived nodes (soft-deleted)
+            base_query = """
+                SELECT
+                    f.node_id,
+                    f.content,
+                    f.type,
+                    bm25(content_fts) as score,
+                    snippet(content_fts, 1, '<b>', '</b>', '...', 32) as snippet
+                FROM content_fts f
+                JOIN nodes n ON f.node_id = n.id
+                WHERE content_fts MATCH ?
+                AND n.tier != 'archive'
+            """
+
+            params: list[Any] = [query]
+            conditions = []
+
+            if node_type:
+                conditions.append("f.type = ?")
+                params.append(node_type)
+
+            if min_confidence is not None:
+                conditions.append("n.confidence >= ?")
+                params.append(min_confidence)
+
+            if conditions:
+                base_query += " AND " + " AND ".join(conditions)
+
+            base_query += " ORDER BY score LIMIT ?"
+            params.append(limit)
+
+            cursor = conn.execute(base_query, params)
+            results = []
+            for row in cursor.fetchall():
+                results.append(
+                    SearchResult(
+                        node_id=row["node_id"],
+                        content=row["content"],
+                        node_type=row["type"],
+                        bm25_score=row["score"],
+                        snippet=row["snippet"],
+                    )
+                )
+            return results
+
+        except Exception:
+            # FTS query syntax error or other issue
+            return []
+        finally:
+            conn.close()
+
+    def search_prefix(self, prefix: str, limit: int = 20) -> list[SearchResult]:
+        """
+        Search for nodes matching a prefix.
+
+        Args:
+            prefix: Prefix to search for (will add * for prefix matching)
+            limit: Maximum results
+
+        Returns:
+            List of SearchResult objects
+        """
+        if not prefix or not prefix.strip():
+            return []
+
+        # Add prefix matching syntax
+        query = f"{prefix.strip()}*"
+        return self.search(query, limit=limit)
+
+    def search_phrase(self, phrase: str, limit: int = 20) -> list[SearchResult]:
+        """
+        Search for an exact phrase.
+
+        Args:
+            phrase: Exact phrase to search for
+            limit: Maximum results
+
+        Returns:
+            List of SearchResult objects
+        """
+        if not phrase or not phrase.strip():
+            return []
+
+        # Wrap in quotes for exact phrase matching
+        query = f'"{phrase.strip()}"'
+        return self.search(query, limit=limit)
+
+    def rebuild_fts_index(self) -> int:
+        """
+        Rebuild the FTS index from the nodes table.
+
+        Useful after bulk imports or if index gets out of sync.
+
+        Returns:
+            Number of nodes indexed
+        """
+        conn = self._get_connection()
+        try:
+            # Clear and rebuild
+            conn.execute("DELETE FROM content_fts")
+            cursor = conn.execute(
+                "INSERT INTO content_fts(node_id, content, type) "
+                "SELECT id, content, type FROM nodes WHERE tier != 'archive'"
+            )
+            conn.commit()
+            return cursor.rowcount
+        finally:
+            conn.close()
+
+    def get_fts_stats(self) -> dict[str, Any]:
+        """
+        Get statistics about the FTS index.
+
+        Returns:
+            Dict with index statistics
+        """
+        conn = self._get_connection()
+        try:
+            # Count indexed documents
+            cursor = conn.execute("SELECT COUNT(*) as count FROM content_fts")
+            doc_count = cursor.fetchone()["count"]
+
+            # Get index size (approximate)
+            cursor = conn.execute(
+                "SELECT SUM(length(content)) as total_chars FROM content_fts"
+            )
+            row = cursor.fetchone()
+            total_chars = row["total_chars"] if row["total_chars"] else 0
+
+            return {
+                "indexed_documents": doc_count,
+                "total_characters": total_chars,
+                "estimated_tokens": total_chars // 4,
+            }
+        finally:
+            conn.close()
+
+    # =========================================================================
     # Helpers
     # =========================================================================
 
@@ -944,4 +1558,4 @@ class MemoryStore:
         )
 
 
-__all__ = ["MemoryStore", "Node", "Hyperedge", "EvolutionLogEntry"]
+__all__ = ["MemoryStore", "Node", "Hyperedge", "EvolutionLogEntry", "SearchResult", "ConfidenceUpdate"]

@@ -406,12 +406,25 @@ class TestEstimateTokens:
     """Tests for token estimation utilities."""
 
     def test_estimate_tokens_basic(self):
-        """Estimates tokens from text."""
+        """Estimates tokens from text using tiktoken."""
         text = "a" * 400  # 400 chars
         tokens = estimate_tokens(text)
 
-        # ~4 chars per token
-        assert tokens == 100
+        # tiktoken gives accurate counts, typically fewer than 4 chars/token heuristic
+        # for repeated characters. The key is tokens > 0 and reasonable.
+        assert tokens > 0
+        assert tokens <= 400  # Can't be more tokens than characters
+
+    def test_estimate_tokens_realistic_text(self):
+        """Estimates tokens for realistic English text."""
+        # Realistic text has ~4 chars/token on average
+        text = "The quick brown fox jumps over the lazy dog. " * 10
+        tokens = estimate_tokens(text)
+
+        # Should be roughly len(text) / 4, within reasonable bounds
+        expected_approx = len(text) // 4
+        assert tokens > expected_approx * 0.5  # At least half of estimate
+        assert tokens < expected_approx * 2.0  # At most double
 
     def test_estimate_context_tokens(self):
         """Estimates tokens for full context."""

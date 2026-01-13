@@ -367,6 +367,69 @@ class TestTrainingDataExporter:
         assert dist["source"]["api"] == 1
         assert dist["source"]["heuristic"] == 1
 
+    def test_export_setfit_binary(self, populated_log, tmp_path):
+        """Exports to SetFit binary format."""
+        exporter = TrainingDataExporter(populated_log)
+        output_path = str(tmp_path / "setfit_binary.jsonl")
+
+        count = exporter.export_setfit(output_path, label_type="binary")
+
+        assert count == 2
+        assert Path(output_path).exists()
+
+        # Check format
+        with open(output_path) as f:
+            lines = f.readlines()
+            assert len(lines) == 2
+
+            # First entry should be activate_rlm=True -> label=1
+            entry1 = json.loads(lines[0])
+            assert "text" in entry1
+            assert entry1["label"] == 1
+
+            # Second entry should be activate_rlm=False -> label=0
+            entry2 = json.loads(lines[1])
+            assert entry2["label"] == 0
+
+        # Check metadata file
+        meta_path = tmp_path / "setfit_binary.meta.json"
+        assert meta_path.exists()
+        with open(meta_path) as f:
+            meta = json.load(f)
+            assert meta["format"] == "setfit"
+            assert meta["label_type"] == "binary"
+            assert meta["total_examples"] == 2
+
+    def test_export_setfit_mode(self, populated_log, tmp_path):
+        """Exports to SetFit mode format (3-class)."""
+        exporter = TrainingDataExporter(populated_log)
+        output_path = str(tmp_path / "setfit_mode.jsonl")
+
+        count = exporter.export_setfit(output_path, label_type="mode")
+
+        assert count == 2
+        assert Path(output_path).exists()
+
+        with open(output_path) as f:
+            lines = f.readlines()
+            entry1 = json.loads(lines[0])
+            assert entry1["label"] in ["fast", "balanced", "thorough"]
+
+    def test_export_setfit_complexity(self, populated_log, tmp_path):
+        """Exports to SetFit complexity format (5-class)."""
+        exporter = TrainingDataExporter(populated_log)
+        output_path = str(tmp_path / "setfit_complexity.jsonl")
+
+        count = exporter.export_setfit(output_path, label_type="complexity")
+
+        assert count == 2
+        assert Path(output_path).exists()
+
+        with open(output_path) as f:
+            lines = f.readlines()
+            entry1 = json.loads(lines[0])
+            assert entry1["label"] in ["trivial", "simple", "moderate", "complex", "unbounded"]
+
 
 class TestGlobalLogger:
     """Tests for global logger functions."""

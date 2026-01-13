@@ -13,13 +13,11 @@ Allows users to configure:
 from __future__ import annotations
 
 import json
-import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from .orchestration_schema import ExecutionMode, ToolAccessLevel
-
 
 # Default preferences file location
 DEFAULT_PREFS_PATH = Path.home() / ".config" / "rlm-claude-code" / "preferences.json"

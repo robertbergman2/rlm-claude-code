@@ -14,46 +14,83 @@ Implements intelligent orchestration with:
 __version__ = "0.2.0"
 
 # Core orchestration
-from .orchestrator import RLMOrchestrator
-from .intelligent_orchestrator import IntelligentOrchestrator
 from .auto_activation import AutoActivator, check_auto_activation
-
-# Context and REPL
-from .context_manager import externalize_context
-from .repl_environment import RLMEnvironment
-from .types import SessionContext
 
 # Complexity and routing
 from .complexity_classifier import should_activate_rlm
-from .orchestration_schema import ExecutionMode, OrchestrationPlan, ToolAccessLevel
-from .local_orchestrator import LocalOrchestrator, LocalModelConfig, RECOMMENDED_CONFIGS
+
+# Context indexing (SPEC-01.04 - Phase 4)
+from .context_index import ContextIndex, FileIndex, IndexStats
+
+# Context and REPL
+from .context_manager import (
+    LazyContext,
+    LazyContextConfig,
+    LazyContextVariable,
+    LazyFileLoader,
+    create_lazy_context,
+    externalize_context,
+)
+
+# Enhanced budget tracking (SPEC-05)
+from .enhanced_budget import BudgetAlert, BudgetLimits, EnhancedBudgetMetrics, EnhancedBudgetTracker
+from .intelligent_orchestrator import IntelligentOrchestrator
+from .local_orchestrator import RECOMMENDED_CONFIGS, LocalModelConfig, LocalOrchestrator
+from .memory_evolution import ConsolidationResult, DecayResult, MemoryEvolution, PromotionResult
+
+# Memory system (SPEC-02, SPEC-03)
+from .memory_store import ConfidenceUpdate, Hyperedge, MemoryStore, Node, SearchResult
 from .orchestration_logger import (
-    OrchestrationLogger,
     LoggerConfig,
     OrchestrationDecisionLog,
+    OrchestrationLogger,
     TrainingDataExporter,
     get_logger,
     set_logger,
 )
+from .orchestration_schema import ExecutionMode, OrchestrationPlan, ToolAccessLevel
+from .orchestrator import RLMOrchestrator
+
+# Progress reporting (SPEC-01.05 - Phase 4)
+from .progress import (
+    CancellationToken,
+    CancelledException,
+    ConsoleProgressCallback,
+    NullProgressCallback,
+    OperationType,
+    ProgressCallback,
+    ProgressContext,
+    ProgressStats,
+    ProgressUpdate,
+    ThrottledProgressCallback,
+    create_progress_context,
+)
+
+# Reasoning traces (SPEC-04)
+from .reasoning_traces import DecisionNode, DecisionTree, EvidenceScore, ReasoningTraces
+from .repl_environment import RLMEnvironment
+from .strategy_cache import StrategyCache
+
+# Tokenization (SPEC-01.01 - Phase 4)
+from .tokenization import (
+    Chunk,
+    ChunkingConfig,
+    chunk_by_tokens,
+    count_tokens,
+    detect_language,
+    find_semantic_boundaries,
+    partition_content_by_tokens,
+    token_aware_chunk,
+)
+from .tool_bridge import ToolBridge, ToolPermissions
 
 # Trajectory and analysis
 from .trajectory import TrajectoryEvent, TrajectoryRenderer
-from .trajectory_analysis import TrajectoryAnalyzer, StrategyType
+from .trajectory_analysis import StrategyType, TrajectoryAnalyzer
+from .types import SessionContext
 
 # User preferences and tools
-from .user_preferences import UserPreferences, PreferencesManager
-from .tool_bridge import ToolBridge, ToolPermissions
-from .strategy_cache import StrategyCache
-
-# Memory system (SPEC-02, SPEC-03)
-from .memory_store import MemoryStore, Node, Hyperedge
-from .memory_evolution import MemoryEvolution, ConsolidationResult, PromotionResult, DecayResult
-
-# Reasoning traces (SPEC-04)
-from .reasoning_traces import ReasoningTraces, DecisionNode, DecisionTree
-
-# Enhanced budget tracking (SPEC-05)
-from .enhanced_budget import EnhancedBudgetTracker, EnhancedBudgetMetrics, BudgetLimits, BudgetAlert
+from .user_preferences import PreferencesManager, UserPreferences
 
 __all__ = [
     # Core
@@ -65,6 +102,12 @@ __all__ = [
     "SessionContext",
     "externalize_context",
     "RLMEnvironment",
+    # Lazy context loading (SPEC-01.02)
+    "LazyContextVariable",
+    "LazyContextConfig",
+    "LazyFileLoader",
+    "LazyContext",
+    "create_lazy_context",
     # Complexity
     "should_activate_rlm",
     "ExecutionMode",
@@ -96,6 +139,8 @@ __all__ = [
     "MemoryStore",
     "Node",
     "Hyperedge",
+    "ConfidenceUpdate",
+    "SearchResult",
     "MemoryEvolution",
     "ConsolidationResult",
     "PromotionResult",
@@ -104,9 +149,35 @@ __all__ = [
     "ReasoningTraces",
     "DecisionNode",
     "DecisionTree",
+    "EvidenceScore",
     # Enhanced budget (SPEC-05)
     "EnhancedBudgetTracker",
     "EnhancedBudgetMetrics",
     "BudgetLimits",
     "BudgetAlert",
+    # Tokenization (SPEC-01.01 - Phase 4)
+    "Chunk",
+    "ChunkingConfig",
+    "count_tokens",
+    "token_aware_chunk",
+    "chunk_by_tokens",
+    "partition_content_by_tokens",
+    "detect_language",
+    "find_semantic_boundaries",
+    # Context indexing (SPEC-01.04 - Phase 4)
+    "ContextIndex",
+    "FileIndex",
+    "IndexStats",
+    # Progress reporting (SPEC-01.05 - Phase 4)
+    "OperationType",
+    "ProgressUpdate",
+    "ProgressStats",
+    "ProgressCallback",
+    "CancellationToken",
+    "CancelledException",
+    "ProgressContext",
+    "create_progress_context",
+    "ConsoleProgressCallback",
+    "NullProgressCallback",
+    "ThrottledProgressCallback",
 ]

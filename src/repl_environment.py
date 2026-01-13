@@ -19,6 +19,7 @@ from RestrictedPython.Guards import (
     safer_getattr,
 )
 
+from .tokenization import partition_content_by_tokens
 from .types import DeferredBatch, DeferredOperation, ExecutionResult, SessionContext
 
 if TYPE_CHECKING:
@@ -570,9 +571,12 @@ class RLMEnvironment:
 
     def _partition_content(self, content: str, n_chunks: int) -> list[str]:
         """
-        Partition content into roughly equal chunks.
+        Partition content into roughly equal token-sized chunks.
 
         Implements: Spec SPEC-01.02
+
+        Uses token-aware chunking (SPEC-01.01) for accurate LLM context handling.
+        Chunks at semantic boundaries (function/class definitions) when possible.
 
         Args:
             content: Content to partition
@@ -581,40 +585,7 @@ class RLMEnvironment:
         Returns:
             List of content chunks
         """
-        if not content:
-            return [""]
-
-        # Ensure at least 1 chunk
-        n_chunks = max(1, n_chunks)
-
-        # If content is shorter than n_chunks, reduce n_chunks
-        if len(content) < n_chunks:
-            n_chunks = max(1, len(content))
-
-        # Calculate chunk size
-        chunk_size = len(content) // n_chunks
-        if chunk_size == 0:
-            return [content]
-
-        chunks = []
-        start = 0
-
-        for i in range(n_chunks):
-            if i == n_chunks - 1:
-                # Last chunk gets the remainder
-                chunks.append(content[start:])
-            else:
-                end = start + chunk_size
-                # Try to break at a newline for cleaner chunks
-                newline_pos = content.find("\n", end)
-                if newline_pos != -1 and newline_pos < end + chunk_size // 4:
-                    end = newline_pos + 1
-                chunks.append(content[start:end])
-                start = end
-
-        # Filter out empty chunks but ensure at least one
-        chunks = [c for c in chunks if c] or [""]
-        return chunks
+        return partition_content_by_tokens(content, n_chunks)
 
     def _find_relevant(
         self,

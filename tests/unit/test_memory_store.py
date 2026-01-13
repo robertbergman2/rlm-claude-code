@@ -987,3 +987,579 @@ class TestDefaultConfidence:
 
         node = memory_store.get_node(node_id)
         assert node.confidence == 0.5
+
+
+# =============================================================================
+# Evidence Linking Tests
+# =============================================================================
+
+
+class TestEvidenceLabels:
+    """Tests for evidence label constants."""
+
+    def test_evidence_labels_exist(self):
+        """All evidence labels are defined."""
+        from src.memory_store import MemoryStore
+
+        assert "supports" in MemoryStore.EVIDENCE_LABELS
+        assert "contradicts" in MemoryStore.EVIDENCE_LABELS
+        assert "validates" in MemoryStore.EVIDENCE_LABELS
+        assert "invalidates" in MemoryStore.EVIDENCE_LABELS
+
+    def test_decision_labels_exist(self):
+        """All decision labels are defined."""
+        from src.memory_store import MemoryStore
+
+        assert "spawns" in MemoryStore.DECISION_LABELS
+        assert "considers" in MemoryStore.DECISION_LABELS
+        assert "chooses" in MemoryStore.DECISION_LABELS
+        assert "rejects" in MemoryStore.DECISION_LABELS
+
+    def test_valid_edge_labels_combines_both(self):
+        """VALID_EDGE_LABELS includes both decision and evidence labels."""
+        from src.memory_store import MemoryStore
+
+        assert MemoryStore.EVIDENCE_LABELS.issubset(MemoryStore.VALID_EDGE_LABELS)
+        assert MemoryStore.DECISION_LABELS.issubset(MemoryStore.VALID_EDGE_LABELS)
+
+
+class TestCreateEvidenceEdge:
+    """Tests for create_evidence_edge method."""
+
+    def test_create_supports_edge(self, memory_store):
+        """Can create a 'supports' evidence edge."""
+        fact_id = memory_store.create_node("fact", "Python is popular")
+        option_id = memory_store.create_node("decision", "Use Python")
+
+        edge_id = memory_store.create_evidence_edge(
+            label="supports",
+            source_id=fact_id,
+            target_id=option_id,
+            weight=0.8,
+        )
+
+        assert edge_id is not None
+        edge = memory_store.get_edge(edge_id)
+        assert edge.label == "supports"
+        assert edge.weight == 0.8
+
+    def test_create_contradicts_edge(self, memory_store):
+        """Can create a 'contradicts' evidence edge."""
+        fact_id = memory_store.create_node("fact", "Python is slow")
+        option_id = memory_store.create_node("decision", "Use Python for HPC")
+
+        edge_id = memory_store.create_evidence_edge(
+            label="contradicts",
+            source_id=fact_id,
+            target_id=option_id,
+        )
+
+        assert edge_id is not None
+        edge = memory_store.get_edge(edge_id)
+        assert edge.label == "contradicts"
+
+    def test_create_validates_edge(self, memory_store):
+        """Can create a 'validates' evidence edge."""
+        outcome_id = memory_store.create_node("experience", "Deployment succeeded")
+        fact_id = memory_store.create_node("fact", "CI pipeline is reliable")
+
+        edge_id = memory_store.create_evidence_edge(
+            label="validates",
+            source_id=outcome_id,
+            target_id=fact_id,
+        )
+
+        assert edge_id is not None
+        edge = memory_store.get_edge(edge_id)
+        assert edge.label == "validates"
+
+    def test_create_invalidates_edge(self, memory_store):
+        """Can create an 'invalidates' evidence edge."""
+        outcome_id = memory_store.create_node("experience", "Tests failed")
+        fact_id = memory_store.create_node("fact", "Code is well tested")
+
+        edge_id = memory_store.create_evidence_edge(
+            label="invalidates",
+            source_id=outcome_id,
+            target_id=fact_id,
+        )
+
+        assert edge_id is not None
+        edge = memory_store.get_edge(edge_id)
+        assert edge.label == "invalidates"
+
+    def test_invalid_evidence_label_raises(self, memory_store):
+        """Invalid evidence label raises ValueError."""
+        import pytest
+
+        fact_id = memory_store.create_node("fact", "Test fact")
+        option_id = memory_store.create_node("decision", "Test option")
+
+        with pytest.raises(ValueError, match="Invalid evidence label"):
+            memory_store.create_evidence_edge(
+                label="invalid_label",
+                source_id=fact_id,
+                target_id=option_id,
+            )
+
+
+class TestEvidenceQueries:
+    """Tests for evidence query methods."""
+
+    def test_get_supporting_facts(self, memory_store):
+        """Can retrieve supporting facts for an option."""
+        fact1_id = memory_store.create_node("fact", "Fact 1")
+        fact2_id = memory_store.create_node("fact", "Fact 2")
+        option_id = memory_store.create_node("decision", "Option")
+
+        memory_store.create_evidence_edge("supports", fact1_id, option_id, 0.9)
+        memory_store.create_evidence_edge("supports", fact2_id, option_id, 0.7)
+
+        supporting = memory_store.get_supporting_facts(option_id)
+
+        assert len(supporting) == 2
+        fact_ids = [f[0] for f in supporting]
+        assert fact1_id in fact_ids
+        assert fact2_id in fact_ids
+
+    def test_get_contradicting_facts(self, memory_store):
+        """Can retrieve contradicting facts for an option."""
+        fact_id = memory_store.create_node("fact", "Contradicting fact")
+        option_id = memory_store.create_node("decision", "Option")
+
+        memory_store.create_evidence_edge("contradicts", fact_id, option_id, 0.8)
+
+        contradicting = memory_store.get_contradicting_facts(option_id)
+
+        assert len(contradicting) == 1
+        assert contradicting[0][0] == fact_id
+        assert contradicting[0][1] == 0.8
+
+    def test_get_validating_outcomes(self, memory_store):
+        """Can retrieve validating outcomes for a fact."""
+        outcome_id = memory_store.create_node("experience", "Success outcome")
+        fact_id = memory_store.create_node("fact", "Fact")
+
+        memory_store.create_evidence_edge("validates", outcome_id, fact_id, 1.0)
+
+        validating = memory_store.get_validating_outcomes(fact_id)
+
+        assert len(validating) == 1
+        assert validating[0][0] == outcome_id
+
+    def test_get_invalidating_outcomes(self, memory_store):
+        """Can retrieve invalidating outcomes for a fact."""
+        outcome_id = memory_store.create_node("experience", "Failure outcome")
+        fact_id = memory_store.create_node("fact", "Fact")
+
+        memory_store.create_evidence_edge("invalidates", outcome_id, fact_id, 0.9)
+
+        invalidating = memory_store.get_invalidating_outcomes(fact_id)
+
+        assert len(invalidating) == 1
+        assert invalidating[0][0] == outcome_id
+        assert invalidating[0][1] == 0.9
+
+    def test_get_evidence_targets(self, memory_store):
+        """Can retrieve targets that a source provides evidence for."""
+        fact_id = memory_store.create_node("fact", "Fact")
+        option1_id = memory_store.create_node("decision", "Option 1")
+        option2_id = memory_store.create_node("decision", "Option 2")
+
+        memory_store.create_evidence_edge("supports", fact_id, option1_id, 0.8)
+        memory_store.create_evidence_edge("contradicts", fact_id, option2_id, 0.6)
+
+        supports_targets = memory_store.get_evidence_targets(fact_id, "supports")
+        contradicts_targets = memory_store.get_evidence_targets(fact_id, "contradicts")
+
+        assert len(supports_targets) == 1
+        assert supports_targets[0][0] == option1_id
+        assert len(contradicts_targets) == 1
+        assert contradicts_targets[0][0] == option2_id
+
+    def test_empty_evidence_returns_empty_list(self, memory_store):
+        """No evidence returns empty list."""
+        option_id = memory_store.create_node("decision", "Lonely option")
+
+        supporting = memory_store.get_supporting_facts(option_id)
+        contradicting = memory_store.get_contradicting_facts(option_id)
+
+        assert supporting == []
+        assert contradicting == []
+
+
+# =============================================================================
+# Confidence Update Logging (Phase 3: Memory Integration)
+# =============================================================================
+
+
+class TestConfidenceUpdateLogging:
+    """Tests for confidence update audit logging."""
+
+    def test_confidence_updates_table_exists(self, memory_store):
+        """Schema should include confidence_updates table."""
+        conn = sqlite3.connect(memory_store.db_path)
+        cursor = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='confidence_updates'"
+        )
+        result = cursor.fetchone()
+        conn.close()
+        assert result is not None
+
+    def test_log_confidence_update(self, memory_store):
+        """Can log a confidence update."""
+        from src.memory_store import ConfidenceUpdate
+
+        node_id = memory_store.create_node("fact", "Test fact", confidence=0.5)
+
+        log_id = memory_store.log_confidence_update(
+            node_id=node_id,
+            old_confidence=0.5,
+            new_confidence=0.6,
+            trigger_type="outcome",
+            trigger_id="outcome-123",
+        )
+
+        assert log_id > 0
+
+    def test_invalid_trigger_type_raises(self, memory_store):
+        """Invalid trigger type should raise ValueError."""
+        node_id = memory_store.create_node("fact", "Test fact")
+
+        with pytest.raises(ValueError, match="Invalid trigger type"):
+            memory_store.log_confidence_update(
+                node_id=node_id,
+                old_confidence=0.5,
+                new_confidence=0.6,
+                trigger_type="invalid_type",
+            )
+
+    def test_get_confidence_history(self, memory_store):
+        """Can retrieve confidence history for a node."""
+        node_id = memory_store.create_node("fact", "Test fact", confidence=0.5)
+
+        # Log several updates
+        memory_store.log_confidence_update(node_id, 0.5, 0.6, "outcome", "out-1")
+        memory_store.log_confidence_update(node_id, 0.6, 0.7, "outcome", "out-2")
+        memory_store.log_confidence_update(node_id, 0.7, 0.65, "decay")
+
+        history = memory_store.get_confidence_history(node_id)
+
+        assert len(history) == 3
+        # Should be in reverse chronological order
+        assert history[0].new_confidence == 0.65
+        assert history[0].trigger_type == "decay"
+        assert history[1].new_confidence == 0.7
+        assert history[2].new_confidence == 0.6
+
+    def test_get_confidence_history_with_limit(self, memory_store):
+        """Can limit confidence history results."""
+        node_id = memory_store.create_node("fact", "Test fact")
+
+        for i in range(5):
+            memory_store.log_confidence_update(
+                node_id, 0.5 + i * 0.1, 0.5 + (i + 1) * 0.1, "outcome"
+            )
+
+        history = memory_store.get_confidence_history(node_id, limit=2)
+
+        assert len(history) == 2
+
+    def test_get_confidence_updates_by_trigger_type(self, memory_store):
+        """Can filter updates by trigger type."""
+        node_id = memory_store.create_node("fact", "Test fact")
+
+        memory_store.log_confidence_update(node_id, 0.5, 0.6, "outcome")
+        memory_store.log_confidence_update(node_id, 0.6, 0.55, "decay")
+        memory_store.log_confidence_update(node_id, 0.55, 0.65, "outcome")
+
+        outcome_updates = memory_store.get_confidence_updates_by_trigger("outcome")
+        decay_updates = memory_store.get_confidence_updates_by_trigger("decay")
+
+        assert len(outcome_updates) == 2
+        assert len(decay_updates) == 1
+
+    def test_get_confidence_updates_by_trigger_id(self, memory_store):
+        """Can filter updates by specific trigger ID."""
+        node_id = memory_store.create_node("fact", "Test fact")
+
+        memory_store.log_confidence_update(node_id, 0.5, 0.6, "outcome", "outcome-A")
+        memory_store.log_confidence_update(node_id, 0.6, 0.7, "outcome", "outcome-B")
+        memory_store.log_confidence_update(node_id, 0.7, 0.75, "outcome", "outcome-A")
+
+        updates_a = memory_store.get_confidence_updates_by_trigger("outcome", "outcome-A")
+        updates_b = memory_store.get_confidence_updates_by_trigger("outcome", "outcome-B")
+
+        assert len(updates_a) == 2
+        assert len(updates_b) == 1
+
+    def test_get_confidence_drift_report(self, memory_store):
+        """Can get drift report for a node."""
+        node_id = memory_store.create_node("fact", "Test fact", confidence=0.5)
+
+        memory_store.log_confidence_update(node_id, 0.5, 0.6, "outcome")
+        memory_store.log_confidence_update(node_id, 0.6, 0.65, "outcome")
+        memory_store.log_confidence_update(node_id, 0.65, 0.6, "decay")
+
+        report = memory_store.get_confidence_drift_report(node_id)
+
+        assert report["node_id"] == node_id
+        assert report["total_updates"] == 3
+        assert report["initial_confidence"] == 0.5
+        assert report["current_confidence"] == 0.6
+        assert abs(report["total_drift"] - 0.1) < 0.001  # 0.6 - 0.5
+        assert report["updates_by_trigger"]["outcome"] == 2
+        assert report["updates_by_trigger"]["decay"] == 1
+
+    def test_drift_report_empty_history(self, memory_store):
+        """Drift report handles nodes with no history."""
+        node_id = memory_store.create_node("fact", "Test fact")
+
+        report = memory_store.get_confidence_drift_report(node_id)
+
+        assert report["total_updates"] == 0
+        assert report["current_confidence"] is None
+        assert report["total_drift"] == 0.0
+
+    def test_all_valid_trigger_types(self, memory_store):
+        """All valid trigger types should be accepted."""
+        from src.memory_store import VALID_CONFIDENCE_TRIGGERS
+
+        node_id = memory_store.create_node("fact", "Test fact")
+
+        for trigger_type in VALID_CONFIDENCE_TRIGGERS:
+            log_id = memory_store.log_confidence_update(
+                node_id, 0.5, 0.6, trigger_type
+            )
+            assert log_id > 0
+
+
+# =============================================================================
+# FTS5 Full-Text Search Tests (Phase 4: Massive Context)
+# =============================================================================
+
+
+class TestFTS5Search:
+    """Tests for FTS5 full-text search functionality."""
+
+    def test_fts_table_created(self, memory_store):
+        """FTS5 virtual table is created."""
+        conn = sqlite3.connect(memory_store.db_path)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='content_fts'"
+        )
+        result = cursor.fetchone()
+        conn.close()
+        assert result is not None
+
+    def test_search_finds_matching_content(self, memory_store):
+        """Search finds nodes with matching content."""
+        from src.memory_store import SearchResult
+
+        # Create nodes with different content
+        memory_store.create_node("fact", "Python is a programming language")
+        memory_store.create_node("fact", "JavaScript is also a language")
+        memory_store.create_node("fact", "SQLite is a database")
+
+        results = memory_store.search("programming")
+
+        assert len(results) == 1
+        assert isinstance(results[0], SearchResult)
+        assert "Python" in results[0].content
+
+    def test_search_returns_multiple_results(self, memory_store):
+        """Search returns all matching nodes."""
+        memory_store.create_node("fact", "The cat sat on the mat")
+        memory_store.create_node("fact", "The cat chased the mouse")
+        memory_store.create_node("fact", "The dog barked loudly")
+
+        results = memory_store.search("cat")
+
+        assert len(results) == 2
+
+    def test_search_with_porter_stemming(self, memory_store):
+        """Porter stemming matches word variants."""
+        memory_store.create_node("fact", "The programmer is programming")
+
+        # Should match due to stemming
+        results = memory_store.search("program")
+
+        assert len(results) == 1
+
+    def test_search_prefix(self, memory_store):
+        """search_prefix matches prefix patterns."""
+        memory_store.create_node("fact", "Authentication is important")
+        memory_store.create_node("fact", "Authorization controls access")
+
+        results = memory_store.search_prefix("auth")
+
+        assert len(results) == 2
+
+    def test_search_phrase(self, memory_store):
+        """search_phrase matches exact phrases."""
+        memory_store.create_node("fact", "The quick brown fox jumps")
+        memory_store.create_node("fact", "The quick red fox runs")
+
+        results = memory_store.search_phrase("quick brown")
+
+        assert len(results) == 1
+        assert "brown" in results[0].content
+
+    def test_search_with_node_type_filter(self, memory_store):
+        """Search can filter by node type."""
+        memory_store.create_node("fact", "Important fact about Python")
+        memory_store.create_node("entity", "Python entity definition")
+
+        results = memory_store.search("Python", node_type="fact")
+
+        assert len(results) == 1
+        assert results[0].node_type == "fact"
+
+    def test_search_with_confidence_filter(self, memory_store):
+        """Search can filter by minimum confidence."""
+        node1 = memory_store.create_node("fact", "High confidence fact")
+        node2 = memory_store.create_node("fact", "Low confidence fact")
+
+        # Update confidence
+        memory_store.update_node(node1, confidence=0.9)
+        memory_store.update_node(node2, confidence=0.2)
+
+        results = memory_store.search("fact", min_confidence=0.5)
+
+        assert len(results) == 1
+        assert "High" in results[0].content
+
+    def test_search_empty_query(self, memory_store):
+        """Empty query returns empty results."""
+        memory_store.create_node("fact", "Some content")
+
+        assert memory_store.search("") == []
+        assert memory_store.search("   ") == []
+
+    def test_search_no_matches(self, memory_store):
+        """Search with no matches returns empty list."""
+        memory_store.create_node("fact", "Something completely different")
+
+        results = memory_store.search("nonexistentword")
+
+        assert results == []
+
+    def test_search_result_has_bm25_score(self, memory_store):
+        """Search results include BM25 relevance score."""
+        memory_store.create_node("fact", "Python programming language")
+
+        results = memory_store.search("Python")
+
+        assert len(results) == 1
+        assert results[0].bm25_score is not None
+        assert isinstance(results[0].bm25_score, float)
+
+    def test_search_result_has_snippet(self, memory_store):
+        """Search results include highlighted snippet."""
+        memory_store.create_node("fact", "Python is a great programming language for beginners")
+
+        results = memory_store.search("programming")
+
+        assert len(results) == 1
+        assert results[0].snippet is not None
+
+    def test_search_limit(self, memory_store):
+        """Search respects limit parameter."""
+        for i in range(10):
+            memory_store.create_node("fact", f"Test content number {i}")
+
+        results = memory_store.search("content", limit=5)
+
+        assert len(results) == 5
+
+    def test_fts_syncs_on_insert(self, memory_store):
+        """FTS index updates when node is created."""
+        node_id = memory_store.create_node("fact", "Unique searchable content")
+
+        results = memory_store.search("Unique searchable")
+
+        assert len(results) == 1
+        assert results[0].node_id == node_id
+
+    def test_fts_syncs_on_update(self, memory_store):
+        """FTS index updates when node content is updated."""
+        node_id = memory_store.create_node("fact", "Original content here")
+
+        # Update content
+        memory_store.update_node(node_id, content="Updated new content")
+
+        # Old content shouldn't be found
+        old_results = memory_store.search("Original")
+        assert len(old_results) == 0
+
+        # New content should be found
+        new_results = memory_store.search("Updated")
+        assert len(new_results) == 1
+
+    def test_fts_syncs_on_delete(self, memory_store):
+        """FTS index updates when node is deleted."""
+        node_id = memory_store.create_node("fact", "Content to delete")
+
+        # Verify it's searchable
+        assert len(memory_store.search("delete")) == 1
+
+        # Delete the node
+        memory_store.delete_node(node_id)
+
+        # Should no longer be searchable
+        assert len(memory_store.search("delete")) == 0
+
+    def test_rebuild_fts_index(self, memory_store):
+        """rebuild_fts_index repopulates the index."""
+        memory_store.create_node("fact", "First fact")
+        memory_store.create_node("fact", "Second fact")
+
+        # Manually clear FTS (simulate corruption)
+        conn = sqlite3.connect(memory_store.db_path)
+        conn.execute("DELETE FROM content_fts")
+        conn.commit()
+        conn.close()
+
+        # Search should fail now
+        assert len(memory_store.search("fact")) == 0
+
+        # Rebuild
+        count = memory_store.rebuild_fts_index()
+        assert count == 2
+
+        # Search should work again
+        assert len(memory_store.search("fact")) == 2
+
+    def test_get_fts_stats(self, memory_store):
+        """get_fts_stats returns index statistics."""
+        memory_store.create_node("fact", "Content for stats")
+        memory_store.create_node("fact", "More content here")
+
+        stats = memory_store.get_fts_stats()
+
+        assert stats["indexed_documents"] == 2
+        assert stats["total_characters"] > 0
+        assert stats["estimated_tokens"] > 0
+
+    def test_search_handles_special_characters(self, memory_store):
+        """Search handles special characters gracefully."""
+        memory_store.create_node("fact", "Code: def foo(): pass")
+
+        # Should not crash on special FTS syntax chars
+        results = memory_store.search("def")
+        assert len(results) == 1
+
+    def test_search_boolean_operators(self, memory_store):
+        """Search supports FTS5 boolean operators."""
+        memory_store.create_node("fact", "Python and JavaScript are languages")
+        memory_store.create_node("fact", "Only Python here")
+        memory_store.create_node("fact", "Only JavaScript here")
+
+        # AND search
+        results = memory_store.search("Python AND JavaScript")
+        assert len(results) == 1
+
+        # OR search
+        results = memory_store.search("Python OR JavaScript")
+        assert len(results) == 3
