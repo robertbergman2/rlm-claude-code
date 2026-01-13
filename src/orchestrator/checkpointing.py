@@ -23,7 +23,7 @@ class RLMCheckpoint:
     """
     Checkpoint for RLM session state.
 
-    Implements: SPEC-12.05
+    Implements: SPEC-12.05, SPEC-09.20-09.26
 
     Captures all state needed to resume an RLM session:
     - Session identification
@@ -31,6 +31,9 @@ class RLMCheckpoint:
     - Conversation messages
     - REPL variable state
     - Trajectory events for replay
+    - Working memory (SPEC-09.21)
+    - Pending operations (SPEC-09.21)
+    - Cost tracking (SPEC-09.21)
     """
 
     session_id: str
@@ -39,8 +42,12 @@ class RLMCheckpoint:
     messages: list[dict[str, str]]
     repl_state: dict[str, Any]
     trajectory_events: list[dict[str, Any]]
+    # SPEC-09.21: Additional state for multi-turn checkpointing
+    working_memory: dict[str, Any] = field(default_factory=dict)
+    pending_operations: list[dict[str, Any]] = field(default_factory=list)
+    cost_so_far: float = 0.0
     timestamp: float = field(default_factory=time.time)
-    version: str = "1.0"
+    version: str = "1.1"  # Version 1.1 for expanded format
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -53,7 +60,7 @@ class RLMCheckpoint:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> RLMCheckpoint:
-        """Deserialize checkpoint from dictionary."""
+        """Deserialize checkpoint from dictionary with backward compatibility."""
         return cls(
             session_id=data["session_id"],
             depth=data["depth"],
@@ -61,6 +68,10 @@ class RLMCheckpoint:
             messages=data["messages"],
             repl_state=data["repl_state"],
             trajectory_events=data["trajectory_events"],
+            # SPEC-09.21: New fields with defaults for backward compatibility
+            working_memory=data.get("working_memory", {}),
+            pending_operations=data.get("pending_operations", []),
+            cost_so_far=data.get("cost_so_far", 0.0),
             timestamp=data.get("timestamp", time.time()),
             version=data.get("version", "1.0"),
             metadata=data.get("metadata", {}),
@@ -82,6 +93,45 @@ class RLMCheckpoint:
         """Load checkpoint from file."""
         path = Path(path)
         return cls.from_json(path.read_text())
+
+    # SPEC-09.23: Restoration support methods
+
+    def get_repl_state(self) -> dict[str, Any]:
+        """Get REPL state for restoration."""
+        return self.repl_state.copy()
+
+    def get_pending_operations(self) -> list[dict[str, Any]]:
+        """Get all pending operations."""
+        return self.pending_operations.copy()
+
+    def get_resumable_operations(self) -> list[dict[str, Any]]:
+        """Get operations that can be resumed (not completed)."""
+        return [
+            op for op in self.pending_operations
+            if op.get("status") != "completed"
+        ]
+
+    # SPEC-09.26: Version compatibility
+
+    def is_compatible(self, runtime_version: str) -> bool:
+        """
+        Check if checkpoint is compatible with runtime version.
+
+        Args:
+            runtime_version: Current runtime version string (e.g., "1.1")
+
+        Returns:
+            True if checkpoint can be loaded by this runtime
+        """
+        try:
+            checkpoint_major = int(self.version.split(".")[0])
+            runtime_major = int(runtime_version.split(".")[0])
+
+            # Checkpoint major version must not exceed runtime major version
+            return checkpoint_major <= runtime_major
+        except (ValueError, IndexError):
+            # Invalid version format - assume incompatible
+            return False
 
 
 class CheckpointingOrchestrator:
@@ -120,10 +170,15 @@ class CheckpointingOrchestrator:
         messages: list[dict[str, str]],
         repl_state: dict[str, Any],
         trajectory_events: list[dict[str, Any]] | None = None,
+        working_memory: dict[str, Any] | None = None,
+        pending_operations: list[dict[str, Any]] | None = None,
+        cost_so_far: float = 0.0,
         metadata: dict[str, Any] | None = None,
     ) -> RLMCheckpoint:
         """
         Create a checkpoint from current state.
+
+        Implements: SPEC-09.20-09.21
 
         Args:
             session_id: Session identifier
@@ -132,6 +187,9 @@ class CheckpointingOrchestrator:
             messages: Conversation messages
             repl_state: REPL variable state
             trajectory_events: Optional trajectory events
+            working_memory: Current working memory state (SPEC-09.21)
+            pending_operations: Pending async operations (SPEC-09.21)
+            cost_so_far: Accumulated cost in USD (SPEC-09.21)
             metadata: Optional additional metadata
 
         Returns:
@@ -144,6 +202,9 @@ class CheckpointingOrchestrator:
             messages=messages,
             repl_state=repl_state,
             trajectory_events=trajectory_events or [],
+            working_memory=working_memory or {},
+            pending_operations=pending_operations or [],
+            cost_so_far=cost_so_far,
             metadata=metadata or {},
         )
 
@@ -245,6 +306,40 @@ class CheckpointingOrchestrator:
             path.unlink()
 
         return len(to_remove)
+
+    def restore_session(self, session_id: str) -> dict[str, Any] | None:
+        """
+        Restore session state from checkpoint.
+
+        Implements: SPEC-09.23
+
+        Loads the most recent checkpoint and returns restoration info
+        including REPL state and resumable operations.
+
+        Args:
+            session_id: Session to restore
+
+        Returns:
+            Dictionary with restoration info or None if not found
+        """
+        checkpoint = self.load_checkpoint(session_id)
+        if checkpoint is None:
+            return None
+
+        return {
+            "session_id": checkpoint.session_id,
+            "depth": checkpoint.depth,
+            "turn": checkpoint.turn,
+            "messages": checkpoint.messages,
+            "repl_state": checkpoint.get_repl_state(),
+            "working_memory": checkpoint.working_memory,
+            "resumable_operations": checkpoint.get_resumable_operations(),
+            "trajectory_events": checkpoint.trajectory_events,
+            "cost_so_far": checkpoint.cost_so_far,
+            "timestamp": checkpoint.timestamp,
+            "version": checkpoint.version,
+            "metadata": checkpoint.metadata,
+        }
 
 
 __all__ = [

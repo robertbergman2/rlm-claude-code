@@ -41,13 +41,15 @@ from .checkpointing import (
     RLMCheckpoint,
 )
 
-# Steering (SPEC-12.06)
+# Steering (SPEC-12.06, SPEC-11.10-11.16)
 from .steering import (
     AutoSteeringPolicy,
     InteractiveOrchestrator,
     SteeringCallback,
     SteeringDecision,
     SteeringPoint,
+    SteeringPointType,
+    SteeringResponse,
 )
 
 __all__ = [
@@ -70,10 +72,12 @@ __all__ = [
     # Checkpointing (SPEC-12.05)
     "CheckpointingOrchestrator",
     "RLMCheckpoint",
-    # Steering (SPEC-12.06)
+    # Steering (SPEC-12.06, SPEC-11.10-11.16)
     "AutoSteeringPolicy",
     "InteractiveOrchestrator",
     "SteeringCallback",
     "SteeringDecision",
     "SteeringPoint",
+    "SteeringPointType",
+    "SteeringResponse",
 ]

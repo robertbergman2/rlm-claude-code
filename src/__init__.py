@@ -188,6 +188,14 @@ from .tokenization import (
 )
 from .tool_bridge import ToolBridge, ToolPermissions
 
+# Tree of Thoughts (SPEC-07.01-07.07)
+from .tree_of_thoughts import (
+    SearchStrategy,
+    ThoughtNode,
+    ThoughtTree,
+    ToTConfig,
+)
+
 # Trajectory and analysis
 from .trajectory import TrajectoryEvent, TrajectoryRenderer
 from .trajectory_analysis import StrategyType, TrajectoryAnalyzer
@@ -359,4 +367,9 @@ __all__ = [
     "ConsoleProgressCallback",
     "NullProgressCallback",
     "ThrottledProgressCallback",
+    # Tree of Thoughts (SPEC-07.01-07.07)
+    "SearchStrategy",
+    "ThoughtNode",
+    "ThoughtTree",
+    "ToTConfig",
 ]
