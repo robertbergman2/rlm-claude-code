@@ -273,6 +273,17 @@ from .continuous_learning import (
     SignalType,
 )
 
+# Smart RLM pipeline (SPEC-06.50-06.53)
+from .smart_pipeline import (
+    PipelineConfig,
+    PipelineResult,
+    PipelineStage,
+    PipelineTelemetry,
+    SmartPipeline,
+    StageResult,
+    StageTelemetry,
+)
+
 # Trajectory and analysis
 from .trajectory import TrajectoryEvent, TrajectoryRenderer
 from .trajectory_analysis import StrategyType, TrajectoryAnalyzer
@@ -508,4 +519,12 @@ __all__ = [
     "PredictionRecord",
     "SignalExtractor",
     "SignalType",
+    # Smart RLM pipeline (SPEC-06.50-06.53)
+    "PipelineConfig",
+    "PipelineResult",
+    "PipelineStage",
+    "PipelineTelemetry",
+    "SmartPipeline",
+    "StageResult",
+    "StageTelemetry",
 ]
