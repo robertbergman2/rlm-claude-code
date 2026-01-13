@@ -284,6 +284,21 @@ from .smart_pipeline import (
     StageTelemetry,
 )
 
+# Context compression (SPEC-08.20-08.25)
+from .context_compression import (
+    AbstractiveCompressor,
+    AutoCompressor,
+    CompressionConfig,
+    CompressionMetrics,
+    CompressionResult,
+    CompressionStage,
+    ContextCompressor,
+    ExtractiveCompressor,
+    KeyInfoPreserver,
+    RelevanceScorer,
+    TwoStageCompressor,
+)
+
 # Trajectory and analysis
 from .trajectory import TrajectoryEvent, TrajectoryRenderer
 from .trajectory_analysis import StrategyType, TrajectoryAnalyzer
@@ -527,4 +542,16 @@ __all__ = [
     "SmartPipeline",
     "StageResult",
     "StageTelemetry",
+    # Context compression (SPEC-08.20-08.25)
+    "AbstractiveCompressor",
+    "AutoCompressor",
+    "CompressionConfig",
+    "CompressionMetrics",
+    "CompressionResult",
+    "CompressionStage",
+    "ContextCompressor",
+    "ExtractiveCompressor",
+    "KeyInfoPreserver",
+    "RelevanceScorer",
+    "TwoStageCompressor",
 ]
