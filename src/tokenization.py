@@ -478,9 +478,16 @@ def partition_content_by_tokens(content: str, n_chunks: int) -> list[str]:
     if total_tokens == 0:
         return [content]
 
-    # Calculate target tokens per chunk
-    tokens_per_chunk = total_tokens // n_chunks
-    tokens_per_chunk = max(tokens_per_chunk, 100)  # Minimum chunk size
+    # Calculate target tokens per chunk using ceiling division
+    # This ensures we don't create more than n_chunks
+    tokens_per_chunk = -(-total_tokens // n_chunks)  # Ceiling division
+
+    # Apply minimum chunk size only if it won't prevent creating n_chunks
+    # This ensures we respect the n_chunks parameter for smaller content
+    min_chunk_size = 100
+    if total_tokens >= n_chunks * min_chunk_size:
+        tokens_per_chunk = max(tokens_per_chunk, min_chunk_size)
+    # No else needed - ceiling division already handles small content
 
     # Use token_aware_chunk with no overlap
     chunks = token_aware_chunk(
