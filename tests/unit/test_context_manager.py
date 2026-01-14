@@ -17,6 +17,8 @@ from src.context_manager import (
     externalize_conversation,
     externalize_files,
     externalize_tool_outputs,
+    MicroModeContext,
+    create_micro_context,
 )
 
 
@@ -183,3 +185,165 @@ class TestExternalizeContext:
         assert "main.py" in result["files"]
         assert len(result["tool_outputs"]) == 1
         assert result["working_memory"]["state"] == "active"
+
+
+class TestMicroModeContext:
+    """Tests for MicroModeContext (SPEC-14.40-14.44)."""
+
+    @pytest.fixture
+    def session_context(self):
+        """Create a session context for testing."""
+        return SessionContext(
+            messages=[Message(role=MessageRole.USER, content="test query")],
+            files={"app.py": "print('hello')"},
+            tool_outputs=[],
+        )
+
+    def test_create_micro_context(self, session_context):
+        """Can create micro context with query and session context."""
+        ctx = create_micro_context(
+            query="What does this do?",
+            session_context=session_context,
+        )
+
+        assert ctx.query == "What does this do?"
+        assert ctx.prior_result is None
+
+    def test_micro_context_query_accessible(self, session_context):
+        """Query is directly accessible (SPEC-14.41)."""
+        ctx = create_micro_context(query="my query", session_context=session_context)
+
+        assert ctx.query == "my query"
+
+    def test_micro_context_lazy_loads_context(self, session_context):
+        """Context is lazy loaded (SPEC-14.44)."""
+        ctx = create_micro_context(query="test", session_context=session_context)
+
+        # Not loaded yet
+        assert not ctx.is_context_loaded
+
+        # Access context
+        _ = ctx.context
+
+        # Now loaded
+        assert ctx.is_context_loaded
+
+    def test_micro_context_context_has_expected_keys(self, session_context):
+        """Externalized context has expected structure (SPEC-14.41)."""
+        ctx = create_micro_context(query="test", session_context=session_context)
+
+        context = ctx.context
+
+        assert "conversation" in context
+        assert "files" in context
+        assert "tool_outputs" in context
+        assert "working_memory" in context
+
+    def test_micro_context_memory_with_loader(self, session_context):
+        """Memory is loaded via provided loader (SPEC-14.41)."""
+        memory_facts = [{"fact": "important", "confidence": 0.9}]
+
+        ctx = create_micro_context(
+            query="test",
+            session_context=session_context,
+            memory_loader=lambda: memory_facts,
+        )
+
+        assert ctx.memory == memory_facts
+
+    def test_micro_context_memory_lazy_loaded(self, session_context):
+        """Memory is lazy loaded (SPEC-14.44)."""
+        load_count = [0]
+
+        def memory_loader():
+            load_count[0] += 1
+            return [{"fact": "test"}]
+
+        ctx = create_micro_context(
+            query="test",
+            session_context=session_context,
+            memory_loader=memory_loader,
+        )
+
+        # Not loaded yet
+        assert not ctx.is_memory_loaded
+        assert load_count[0] == 0
+
+        # Access memory
+        _ = ctx.memory
+
+        # Now loaded (only once)
+        assert ctx.is_memory_loaded
+        assert load_count[0] == 1
+
+        # Second access doesn't reload
+        _ = ctx.memory
+        assert load_count[0] == 1
+
+    def test_micro_context_memory_without_loader(self, session_context):
+        """Memory is empty list without loader."""
+        ctx = create_micro_context(query="test", session_context=session_context)
+
+        assert ctx.memory == []
+
+    def test_micro_context_prior_result(self, session_context):
+        """Prior result is accessible (SPEC-14.41)."""
+        ctx = create_micro_context(
+            query="test",
+            session_context=session_context,
+            prior_result="previous answer",
+        )
+
+        assert ctx.prior_result == "previous answer"
+
+    def test_micro_context_to_repl_vars(self, session_context):
+        """to_repl_vars provides all expected variables (SPEC-14.40)."""
+        ctx = create_micro_context(
+            query="test query",
+            session_context=session_context,
+            memory_loader=lambda: [{"fact": "test"}],
+            prior_result="prior",
+        )
+
+        repl_vars = ctx.to_repl_vars()
+
+        assert "query" in repl_vars
+        assert "context" in repl_vars
+        assert "memory" in repl_vars
+        assert "prior_result" in repl_vars
+
+        assert repl_vars["query"] == "test query"
+        assert repl_vars["prior_result"] == "prior"
+        assert isinstance(repl_vars["context"], dict)
+        assert isinstance(repl_vars["memory"], list)
+
+    def test_micro_context_prior_result_default_empty_string(self, session_context):
+        """Prior result defaults to empty string in repl vars."""
+        ctx = create_micro_context(query="test", session_context=session_context)
+
+        repl_vars = ctx.to_repl_vars()
+
+        assert repl_vars["prior_result"] == ""
+
+
+class TestMicroModeContextPerformance:
+    """Performance tests for micro mode context (SPEC-14.43)."""
+
+    def test_externalization_overhead_under_100ms(self):
+        """Externalization overhead is under 100ms (SPEC-14.43)."""
+        import time
+
+        # Create a moderate-sized context
+        session_context = SessionContext(
+            messages=[Message(role=MessageRole.USER, content="x" * 1000) for _ in range(10)],
+            files={f"file{i}.py": "y" * 1000 for i in range(10)},
+            tool_outputs=[ToolOutput(tool_name="bash", content="z" * 1000) for _ in range(5)],
+        )
+
+        start = time.perf_counter()
+        ctx = create_micro_context(query="test", session_context=session_context)
+        _ = ctx.to_repl_vars()
+        elapsed_ms = (time.perf_counter() - start) * 1000
+
+        # Should be well under 100ms
+        assert elapsed_ms < 100, f"Externalization took {elapsed_ms:.2f}ms, expected <100ms"

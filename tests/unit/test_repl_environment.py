@@ -16,6 +16,9 @@ from src.repl_environment import (
     RLMEnvironment,
     RLMSecurityError,
     ALLOWED_SUBPROCESSES,
+    MICRO_MODE_FUNCTIONS,
+    MICRO_MODE_BLOCKED,
+    create_micro_environment,
 )
 
 
@@ -553,3 +556,185 @@ class TestDeferredOperations:
         ops, _ = basic_env.get_pending_operations()
         assert len(ops) == 1
         assert ops[0].query == "What is 2+2?"
+
+
+# ============================================================================
+# Micro Mode Tests (SPEC-14.03-14.04)
+# ============================================================================
+
+
+class TestMicroMode:
+    """Tests for micro mode restricted REPL (SPEC-14.03-14.04)."""
+
+    @pytest.fixture
+    def micro_env(self, basic_context):
+        """Create a micro mode REPL environment."""
+        from src.repl_environment import create_micro_environment
+        return create_micro_environment(basic_context, use_restricted=False)
+
+    def test_micro_mode_has_peek(self, micro_env):
+        """SPEC-14.03: Micro mode has peek function."""
+        assert "peek" in micro_env.globals
+        result = micro_env.execute("peek('hello world', 0, 5)")
+        assert result.success is True
+        assert result.output == "hello"
+
+    def test_micro_mode_has_search(self, micro_env):
+        """SPEC-14.03: Micro mode has search function."""
+        assert "search" in micro_env.globals
+        result = micro_env.execute("search(['apple', 'banana'], 'apple')")
+        assert result.success is True
+        assert len(result.output) == 1
+
+    def test_micro_mode_has_summarize_local(self, micro_env):
+        """SPEC-14.03: Micro mode has summarize_local function."""
+        assert "summarize_local" in micro_env.globals
+        result = micro_env.execute("summarize_local('hello world')")
+        assert result.success is True
+        assert "hello world" in result.output
+
+    def test_micro_mode_no_llm(self, micro_env):
+        """SPEC-14.04: Micro mode does NOT have llm function."""
+        assert "llm" not in micro_env.globals
+        result = micro_env.execute("llm('test')")
+        assert result.success is False
+        assert "not defined" in result.error
+
+    def test_micro_mode_no_llm_batch(self, micro_env):
+        """SPEC-14.04: Micro mode does NOT have llm_batch function."""
+        assert "llm_batch" not in micro_env.globals
+
+    def test_micro_mode_no_map_reduce(self, micro_env):
+        """SPEC-14.04: Micro mode does NOT have map_reduce function."""
+        assert "map_reduce" not in micro_env.globals
+
+    def test_micro_mode_no_summarize(self, micro_env):
+        """SPEC-14.04: Micro mode does NOT have LLM-based summarize."""
+        assert "summarize" not in micro_env.globals
+
+    def test_micro_mode_no_recursive_query(self, micro_env):
+        """SPEC-14.04: Micro mode does NOT have recursive_query."""
+        assert "recursive_query" not in micro_env.globals
+
+    def test_micro_mode_no_run_tool(self, micro_env):
+        """Micro mode does NOT have run_tool for subprocess execution."""
+        assert "run_tool" not in micro_env.globals
+
+    def test_micro_mode_no_extended_tooling(self, micro_env):
+        """Micro mode does NOT have pydantic/hypothesis/cpmpy."""
+        assert "pydantic" not in micro_env.globals
+        assert "hypothesis" not in micro_env.globals
+        assert "cpmpy" not in micro_env.globals
+
+    def test_micro_mode_has_context_variables(self, micro_env):
+        """Micro mode has standard context variables."""
+        assert "conversation" in micro_env.globals
+        assert "files" in micro_env.globals
+        assert "tool_outputs" in micro_env.globals
+        assert "working_memory" in micro_env.globals
+
+    def test_micro_mode_has_stdlib(self, micro_env):
+        """Micro mode has re and json modules."""
+        assert "re" in micro_env.globals
+        assert "json" in micro_env.globals
+
+
+class TestSummarizeLocal:
+    """Tests for summarize_local function (SPEC-14.03)."""
+
+    @pytest.fixture
+    def env(self, basic_context):
+        """Create a REPL environment."""
+        return RLMEnvironment(basic_context, use_restricted=False)
+
+    def test_summarize_local_string_short(self, env):
+        """Short strings returned as-is."""
+        result = env._summarize_local("hello world")
+        assert result == "hello world"
+
+    def test_summarize_local_string_truncated(self, env):
+        """Long strings are truncated with count."""
+        long_str = "x" * 1000
+        result = env._summarize_local(long_str, max_chars=100)
+        assert len(result) < 200
+        assert "1000 chars total" in result
+        assert "..." in result
+
+    def test_summarize_local_empty_list(self, env):
+        """Empty list returns empty message."""
+        result = env._summarize_local([])
+        assert "empty list" in result
+
+    def test_summarize_local_list(self, env):
+        """Lists show count and preview."""
+        result = env._summarize_local([1, 2, 3, 4, 5])
+        assert "5" in result or "items" in result
+
+    def test_summarize_local_list_many_items(self, env):
+        """Large lists show count and truncated preview."""
+        result = env._summarize_local(list(range(100)), max_chars=100)
+        assert "100 items total" in result
+        assert "..." in result
+
+    def test_summarize_local_empty_dict(self, env):
+        """Empty dict returns empty message."""
+        result = env._summarize_local({})
+        assert "empty dict" in result
+
+    def test_summarize_local_dict(self, env):
+        """Dicts show count and preview."""
+        result = env._summarize_local({"a": 1, "b": 2})
+        assert "'a'" in result
+        assert "'b'" in result
+
+    def test_summarize_local_dict_many_keys(self, env):
+        """Large dicts show count and truncated preview."""
+        large_dict = {f"key_{i}": f"value_{i}" for i in range(100)}
+        result = env._summarize_local(large_dict, max_chars=100)
+        assert "100 keys total" in result
+        assert "..." in result
+
+    def test_summarize_local_other_type(self, env):
+        """Other types show type name and truncated string."""
+        result = env._summarize_local(12345)
+        assert "(int)" in result
+        assert "12345" in result
+
+
+class TestAccessLevels:
+    """Tests for REPL access levels."""
+
+    @pytest.fixture
+    def standard_env(self, basic_context):
+        """Create a standard access level environment."""
+        return RLMEnvironment(basic_context, use_restricted=False, access_level="standard")
+
+    @pytest.fixture
+    def full_env(self, basic_context):
+        """Create a full access level environment."""
+        return RLMEnvironment(basic_context, use_restricted=False, access_level="full")
+
+    def test_standard_has_all_repl_functions(self, standard_env):
+        """Standard mode has all REPL functions."""
+        assert "peek" in standard_env.globals
+        assert "search" in standard_env.globals
+        assert "summarize_local" in standard_env.globals
+        assert "summarize" in standard_env.globals
+        assert "llm" in standard_env.globals
+        assert "llm_batch" in standard_env.globals
+        assert "map_reduce" in standard_env.globals
+        assert "run_tool" in standard_env.globals
+
+    def test_full_has_all_functions(self, full_env):
+        """Full mode has all functions including tool access."""
+        assert "peek" in full_env.globals
+        assert "search" in full_env.globals
+        assert "llm" in full_env.globals
+        assert "run_tool" in full_env.globals
+
+    def test_default_is_standard(self, basic_context):
+        """Default access level is standard."""
+        env = RLMEnvironment(basic_context, use_restricted=False)
+        assert env.access_level == "standard"
+        assert "llm" in env.globals
+        assert "run_tool" in env.globals

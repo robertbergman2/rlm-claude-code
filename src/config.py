@@ -12,11 +12,28 @@ from typing import Literal
 
 @dataclass
 class ActivationConfig:
-    """Configuration for RLM activation."""
+    """
+    Configuration for RLM activation.
 
-    mode: Literal["complexity", "always", "manual", "token"] = "complexity"
+    Implements: SPEC-14.10-14.15 for always-on micro mode.
+
+    Modes:
+    - "micro": Always-on with minimal cost, starts at micro level (SPEC-14.12 default)
+    - "complexity": Original heuristic-based activation
+    - "always": Always full RLM
+    - "manual": Only when explicitly enabled
+    - "token": Activate above token threshold
+    """
+
+    mode: Literal["micro", "complexity", "always", "manual", "token"] = "micro"
     fallback_token_threshold: int = 80000
     complexity_score_threshold: int = 2
+    # SPEC-14.30: Fast-path bypass configuration
+    fast_path_enabled: bool = True
+    # SPEC-14.20: Escalation configuration
+    escalation_enabled: bool = True
+    # SPEC-14.62: Session token budget
+    session_budget_tokens: int = 500_000
 
 
 @dataclass

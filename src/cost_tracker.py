@@ -723,16 +723,247 @@ def get_cost_tracker() -> CostTracker:
     return _tracker
 
 
+# =============================================================================
+# SPEC-14.60-14.65: Session Budget Management
+# =============================================================================
+
+# Target tokens per execution mode (SPEC-14.65)
+MODE_TOKEN_TARGETS: dict[str, int] = {
+    "micro": 2_000,      # SPEC-14.65: Micro <2K tokens
+    "balanced": 25_000,  # SPEC-14.65: Balanced <25K tokens
+    "thorough": 100_000, # SPEC-14.65: Thorough <100K tokens
+}
+
+# Budget warning thresholds (SPEC-14.63)
+BUDGET_WARNING_THRESHOLDS: list[float] = [0.50, 0.75, 0.90]
+
+
+@dataclass
+class BudgetWarning:
+    """
+    Budget warning at utilization threshold.
+
+    Implements: SPEC-14.63
+    """
+
+    threshold_percent: int
+    tokens_used: int
+    tokens_budget: int
+    message: str
+
+
+class SessionBudget:
+    """
+    Token-based session budget manager.
+
+    Implements: SPEC-14.60-14.65
+
+    Tracks cumulative session cost in tokens (not dollars), provides
+    warnings at configurable thresholds, and prevents escalation if
+    it would exceed budget.
+    """
+
+    def __init__(
+        self,
+        budget_tokens: int = 500_000,  # SPEC-14.62: Default 500K tokens
+        warning_thresholds: list[float] | None = None,
+    ):
+        """
+        Initialize session budget.
+
+        Args:
+            budget_tokens: Maximum tokens for the session (SPEC-14.62)
+            warning_thresholds: Warning thresholds as fractions (SPEC-14.63)
+        """
+        self.budget_tokens = budget_tokens
+        self.warning_thresholds = warning_thresholds or BUDGET_WARNING_THRESHOLDS
+
+        # Track tokens by mode (SPEC-14.65)
+        self._mode_tokens: dict[str, int] = {
+            "micro": 0,
+            "balanced": 0,
+            "thorough": 0,
+        }
+        self._total_tokens = 0
+        self._warnings_emitted: set[int] = set()
+        self._warning_callbacks: list[Callable[[BudgetWarning], None]] = []
+
+    def record_tokens(self, tokens: int, mode: str = "micro") -> list[BudgetWarning]:
+        """
+        Record token usage for the session.
+
+        Implements: SPEC-14.60, SPEC-14.61
+
+        Args:
+            tokens: Number of tokens used
+            mode: Execution mode ("micro", "balanced", "thorough")
+
+        Returns:
+            List of warnings triggered by this usage
+        """
+        self._total_tokens += tokens
+
+        if mode in self._mode_tokens:
+            self._mode_tokens[mode] += tokens
+
+        # Check for warnings (SPEC-14.63)
+        return self._check_warnings()
+
+    def _check_warnings(self) -> list[BudgetWarning]:
+        """Check and emit budget warnings (SPEC-14.63)."""
+        warnings: list[BudgetWarning] = []
+        utilization = self._total_tokens / self.budget_tokens
+
+        for threshold in self.warning_thresholds:
+            threshold_percent = int(threshold * 100)
+
+            if utilization >= threshold and threshold_percent not in self._warnings_emitted:
+                self._warnings_emitted.add(threshold_percent)
+
+                warning = BudgetWarning(
+                    threshold_percent=threshold_percent,
+                    tokens_used=self._total_tokens,
+                    tokens_budget=self.budget_tokens,
+                    message=f"Session budget at {threshold_percent}%: "
+                            f"{self._total_tokens:,} / {self.budget_tokens:,} tokens",
+                )
+                warnings.append(warning)
+
+                # Notify callbacks
+                for callback in self._warning_callbacks:
+                    callback(warning)
+
+        return warnings
+
+    def can_escalate(self, target_mode: str) -> tuple[bool, str | None]:
+        """
+        Check if escalation to target mode is within budget.
+
+        Implements: SPEC-14.64
+
+        Args:
+            target_mode: Mode to escalate to ("balanced", "thorough")
+
+        Returns:
+            (can_escalate, reason) tuple
+        """
+        if target_mode not in MODE_TOKEN_TARGETS:
+            return False, f"Unknown mode: {target_mode}"
+
+        target_tokens = MODE_TOKEN_TARGETS[target_mode]
+        projected_total = self._total_tokens + target_tokens
+
+        if projected_total > self.budget_tokens:
+            return False, (
+                f"Escalation to {target_mode} mode would exceed budget: "
+                f"{projected_total:,} > {self.budget_tokens:,} tokens"
+            )
+
+        return True, None
+
+    def get_available_for_mode(self, mode: str) -> int:
+        """
+        Get remaining tokens available for a mode.
+
+        Args:
+            mode: Execution mode
+
+        Returns:
+            Available tokens (may be negative if over budget)
+        """
+        remaining = self.budget_tokens - self._total_tokens
+        target = MODE_TOKEN_TARGETS.get(mode, MODE_TOKEN_TARGETS["micro"])
+        return min(remaining, target)
+
+    def on_warning(self, callback: Callable[[BudgetWarning], None]) -> None:
+        """Register callback for budget warnings."""
+        self._warning_callbacks.append(callback)
+
+    @property
+    def total_tokens(self) -> int:
+        """Total tokens used in session (SPEC-14.60)."""
+        return self._total_tokens
+
+    @property
+    def remaining_tokens(self) -> int:
+        """Remaining tokens in budget."""
+        return max(0, self.budget_tokens - self._total_tokens)
+
+    @property
+    def utilization(self) -> float:
+        """Budget utilization as fraction."""
+        return self._total_tokens / self.budget_tokens
+
+    @property
+    def utilization_percent(self) -> int:
+        """Budget utilization as percentage."""
+        return int(self.utilization * 100)
+
+    def get_mode_breakdown(self) -> dict[str, dict[str, Any]]:
+        """
+        Get token breakdown by execution mode.
+
+        Implements: SPEC-14.65
+        """
+        return {
+            mode: {
+                "tokens_used": tokens,
+                "target_tokens": MODE_TOKEN_TARGETS.get(mode, 0),
+                "over_target": tokens > MODE_TOKEN_TARGETS.get(mode, float("inf")),
+            }
+            for mode, tokens in self._mode_tokens.items()
+        }
+
+    def get_summary(self) -> dict[str, Any]:
+        """Get complete budget summary."""
+        return {
+            "total_tokens": self._total_tokens,
+            "budget_tokens": self.budget_tokens,
+            "remaining_tokens": self.remaining_tokens,
+            "utilization_percent": self.utilization_percent,
+            "warnings_emitted": sorted(self._warnings_emitted),
+            "by_mode": self.get_mode_breakdown(),
+        }
+
+    def reset(self) -> None:
+        """Reset session budget tracking."""
+        self._total_tokens = 0
+        self._mode_tokens = {k: 0 for k in self._mode_tokens}
+        self._warnings_emitted.clear()
+
+
+def create_session_budget(
+    budget_tokens: int | None = None,
+) -> SessionBudget:
+    """
+    Create a session budget tracker.
+
+    Implements: SPEC-14.62
+
+    Args:
+        budget_tokens: Custom budget (default 500K tokens)
+
+    Returns:
+        Configured SessionBudget instance
+    """
+    return SessionBudget(budget_tokens=budget_tokens or 500_000)
+
+
 __all__ = [
     "BudgetAlert",
+    "BudgetWarning",
     "CostComponent",
     "CostEstimate",
     "CostTracker",
     "DEFAULT_MODEL_FOR_COSTS",
     "MODEL_COSTS",
+    "MODE_TOKEN_TARGETS",
+    "BUDGET_WARNING_THRESHOLDS",
+    "SessionBudget",
     "TokenUsage",
     "compute_affordable_depth",
     "compute_affordable_tokens",
+    "create_session_budget",
     "estimate_call_cost",
     "estimate_context_tokens",
     "estimate_tokens",

@@ -43,6 +43,7 @@ class ModelTier(Enum):
     BALANCED = "balanced"  # Good balance
     POWERFUL = "powerful"  # Highest capability
     CODE_SPECIALIST = "code_specialist"  # Optimized for code
+    INHERIT = "inherit"  # Use parent session model (SPEC-14.02)
 
 
 @dataclass

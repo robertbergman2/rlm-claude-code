@@ -2,6 +2,8 @@
 Auto-activation for RLM mode on complex tasks.
 
 Implements: Spec §8.1 Phase 4 - Auto-activation
+Implements: Spec SPEC-14.10-14.15 for always-on micro mode
+Implements: Spec SPEC-14.30-14.34 for fast-path bypass
 
 Automatically activates RLM mode when the context is complex enough,
 integrating complexity classification, orchestration, and user preferences.
@@ -9,24 +11,43 @@ integrating complexity classification, orchestration, and user preferences.
 
 from __future__ import annotations
 
+import re
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
 
 from .complexity_classifier import (
     extract_complexity_signals,
     is_definitely_simple,
     should_activate_rlm,
 )
-from .orchestration_schema import OrchestrationPlan
+from .orchestration_schema import ExecutionMode, ExecutionStrategy, OrchestrationPlan
 from .types import SessionContext, TaskComplexitySignals
 from .user_preferences import UserPreferences
+
+# SPEC-14.31: Fast-path patterns for queries that skip RLM entirely
+FAST_PATH_PATTERNS: list[re.Pattern[str]] = [
+    re.compile(r"^(show|cat|read)\s+\S+$", re.IGNORECASE),  # File read
+    re.compile(r"^git\s+(status|log|diff)", re.IGNORECASE),  # Git commands
+    re.compile(r"^(yes|no|ok|thanks|thank you)$", re.IGNORECASE),  # Conversational
+    re.compile(r"^what('s| is) in .+\?$", re.IGNORECASE),  # Simple file query
+    re.compile(r"^(list|ls)\s+", re.IGNORECASE),  # Directory listing
+    re.compile(r"^(run|execute)\s+", re.IGNORECASE),  # Command execution
+    re.compile(r"^(cd|pwd|which)\s*", re.IGNORECASE),  # Navigation
+]
+
+# Activation mode type
+ActivationMode = Literal["micro", "complexity", "always", "manual", "token"]
 
 
 @dataclass
 class ActivationDecision:
-    """Result of an activation decision."""
+    """
+    Result of an activation decision.
+
+    Implements: SPEC-14.10-14.15 for always-on micro mode.
+    """
 
     should_activate: bool
     reason: str
@@ -34,6 +55,9 @@ class ActivationDecision:
     signals: TaskComplexitySignals | None = None
     plan: OrchestrationPlan | None = None
     decision_time_ms: float = 0.0
+    # SPEC-14: Mode selection (micro, balanced, thorough, or bypass)
+    execution_mode: ExecutionMode = ExecutionMode.MICRO
+    is_fast_path: bool = False  # SPEC-14.32: True if fast-path bypass
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
@@ -42,6 +66,8 @@ class ActivationDecision:
             "reason": self.reason,
             "confidence": self.confidence,
             "decision_time_ms": self.decision_time_ms,
+            "execution_mode": self.execution_mode.value,
+            "is_fast_path": self.is_fast_path,
             "signals": {
                 "references_multiple_files": self.signals.references_multiple_files,
                 "requires_cross_context_reasoning": self.signals.requires_cross_context_reasoning,
@@ -52,9 +78,34 @@ class ActivationDecision:
         }
 
 
+def is_fast_path_query(prompt: str) -> tuple[bool, float]:
+    """
+    Check if a query matches fast-path bypass patterns.
+
+    Implements: SPEC-14.30-14.34
+
+    Args:
+        prompt: User's prompt
+
+    Returns:
+        Tuple of (is_fast_path, confidence)
+    """
+    prompt_stripped = prompt.strip()
+
+    for pattern in FAST_PATH_PATTERNS:
+        if pattern.match(prompt_stripped):
+            return True, 0.95  # SPEC-14.34: 0.95+ confidence required
+
+    return False, 0.0
+
+
 @dataclass
 class ActivationThresholds:
-    """Configurable thresholds for auto-activation."""
+    """
+    Configurable thresholds for auto-activation.
+
+    Implements: SPEC-14.20-14.25 for progressive escalation.
+    """
 
     # Token thresholds
     min_tokens_for_activation: int = 20_000
@@ -70,6 +121,14 @@ class ActivationThresholds:
     # Context thresholds
     max_files_for_simple: int = 2
     max_modules_for_simple: int = 2
+
+    # SPEC-14: Micro mode thresholds
+    micro_max_tokens: int = 5_000  # SPEC-14.02
+    fast_path_confidence: float = 0.95  # SPEC-14.34
+
+    # SPEC-14.20-14.25: Escalation thresholds
+    escalate_to_balanced_tokens: int = 10_000
+    escalate_to_thorough_tokens: int = 50_000
 
 
 @dataclass
@@ -128,9 +187,14 @@ class AutoActivator:
     Manages automatic RLM activation based on task complexity.
 
     Implements: Spec §8.1 Phase 4 - Auto-activation
+    Implements: SPEC-14.10-14.15 for always-on micro mode
+    Implements: SPEC-14.30-14.34 for fast-path bypass
 
     Features:
     - Fast heuristic-based decisions (<50ms)
+    - Micro mode as default (SPEC-14.11)
+    - Fast-path bypass for trivial queries (SPEC-14.30)
+    - Progressive escalation based on complexity (SPEC-14.20)
     - Respects user preferences
     - Tracks decision statistics
     - Provides callbacks for integration
@@ -140,6 +204,7 @@ class AutoActivator:
         self,
         preferences: UserPreferences | None = None,
         thresholds: ActivationThresholds | None = None,
+        activation_mode: ActivationMode = "micro",
     ):
         """
         Initialize auto-activator.
@@ -147,9 +212,11 @@ class AutoActivator:
         Args:
             preferences: User preferences (defaults to standard)
             thresholds: Activation thresholds (defaults to standard)
+            activation_mode: Default activation mode (SPEC-14.12)
         """
         self.preferences = preferences or UserPreferences()
         self.thresholds = thresholds or ActivationThresholds()
+        self.activation_mode = activation_mode
         self._stats = ActivationStats()
         self._callbacks: list[ActivationCallback] = []
 
@@ -163,11 +230,13 @@ class AutoActivator:
         """
         Decide whether to activate RLM mode.
 
+        Implements: SPEC-14.10-14.15 for always-on micro mode
+
         Args:
             prompt: User's prompt
             context: Current session context
-            force_rlm: Force RLM activation
-            force_simple: Force simple mode
+            force_rlm: Force RLM activation (full mode)
+            force_simple: Force simple mode (bypass RLM)
 
         Returns:
             ActivationDecision with result and reasoning
@@ -180,6 +249,7 @@ class AutoActivator:
                 should_activate=True,
                 reason="manual_force",
                 confidence=1.0,
+                execution_mode=ExecutionMode.BALANCED,
             )
             self._finalize_decision(decision, start, was_override=True)
             return decision
@@ -189,28 +259,156 @@ class AutoActivator:
                 should_activate=False,
                 reason="manual_force_simple",
                 confidence=1.0,
+                execution_mode=ExecutionMode.FAST,
             )
             self._finalize_decision(decision, start, was_override=True)
             return decision
 
-        # Check if auto-activation is disabled
-        if not self.preferences.auto_activate:
+        # Check if auto-activation is disabled (manual mode)
+        if self.activation_mode == "manual" or not self.preferences.auto_activate:
             decision = ActivationDecision(
                 should_activate=False,
                 reason="auto_activate_disabled",
                 confidence=1.0,
+                execution_mode=ExecutionMode.FAST,
             )
             self._finalize_decision(decision, start)
             return decision
 
+        # SPEC-14.30-14.34: Fast-path bypass for trivial queries
+        is_fast_path, fast_confidence = is_fast_path_query(prompt)
+        if is_fast_path and fast_confidence >= self.thresholds.fast_path_confidence:
+            decision = ActivationDecision(
+                should_activate=False,
+                reason="fast_path_bypass",
+                confidence=fast_confidence,
+                is_fast_path=True,
+                execution_mode=ExecutionMode.FAST,
+            )
+            self._finalize_decision(decision, start)
+            return decision
+
+        # SPEC-14.10-14.11: Micro mode is the default
+        if self.activation_mode == "micro":
+            return self._micro_mode_decision(prompt, context, start)
+
+        # Legacy activation modes
+        return self._complexity_mode_decision(prompt, context, start)
+
+    def _micro_mode_decision(
+        self,
+        prompt: str,
+        context: SessionContext,
+        start_time: float,
+    ) -> ActivationDecision:
+        """
+        Make activation decision for micro mode (always-on default).
+
+        Implements: SPEC-14.10-14.15, SPEC-14.20-14.25
+
+        Args:
+            prompt: User's prompt
+            context: Current session context
+            start_time: Decision start time
+
+        Returns:
+            ActivationDecision with micro mode or escalated mode
+        """
+        # Extract complexity signals for escalation check
+        signals = extract_complexity_signals(prompt, context)
+
+        # SPEC-14.20-14.25: Check escalation triggers
+        execution_mode, reason = self._check_escalation_triggers(prompt, signals, context)
+
+        # Calculate confidence
+        confidence = self._calculate_confidence(signals, context)
+
+        # SPEC-14.10: Always activate in micro mode (unless fast-path)
+        decision = ActivationDecision(
+            should_activate=True,
+            reason=reason,
+            confidence=confidence,
+            signals=signals,
+            execution_mode=execution_mode,
+        )
+
+        self._finalize_decision(decision, start_time)
+        return decision
+
+    def _check_escalation_triggers(
+        self,
+        prompt: str,
+        signals: TaskComplexitySignals,
+        context: SessionContext,
+    ) -> tuple[ExecutionMode, str]:
+        """
+        Check if micro mode should escalate to a higher mode.
+
+        Implements: SPEC-14.20-14.25 - Progressive escalation
+
+        Args:
+            prompt: User's prompt
+            signals: Extracted complexity signals
+            context: Session context
+
+        Returns:
+            Tuple of (execution_mode, reason)
+        """
+        prompt_lower = prompt.lower()
+
+        # SPEC-14.21: Immediate escalation to THOROUGH
+        if any(kw in prompt_lower for kw in ["architecture", "design decision", "thorough"]):
+            return ExecutionMode.THOROUGH, "escalate_thorough:architecture_or_user_request"
+
+        # SPEC-14.21: Immediate escalation to BALANCED
+        if signals.references_multiple_files:
+            return ExecutionMode.BALANCED, "escalate_balanced:multi_file_reference"
+
+        if signals.debugging_task:
+            return ExecutionMode.BALANCED, "escalate_balanced:debugging_task"
+
+        if any(kw in prompt_lower for kw in ["discover", "explore", "understand", "analyze"]):
+            return ExecutionMode.BALANCED, "escalate_balanced:discovery_keywords"
+
+        if signals.requires_cross_context_reasoning:
+            return ExecutionMode.BALANCED, "escalate_balanced:cross_context_reasoning"
+
+        # Large context triggers escalation
+        if context.total_tokens >= self.thresholds.escalate_to_thorough_tokens:
+            return ExecutionMode.THOROUGH, "escalate_thorough:large_context"
+
+        if context.total_tokens >= self.thresholds.escalate_to_balanced_tokens:
+            return ExecutionMode.BALANCED, "escalate_balanced:medium_context"
+
+        # Default: stay in micro mode
+        return ExecutionMode.MICRO, "micro_mode:default"
+
+    def _complexity_mode_decision(
+        self,
+        prompt: str,
+        context: SessionContext,
+        start_time: float,
+    ) -> ActivationDecision:
+        """
+        Make activation decision using legacy complexity-based mode.
+
+        Args:
+            prompt: User's prompt
+            context: Current session context
+            start_time: Decision start time
+
+        Returns:
+            ActivationDecision
+        """
         # Fast path: definitely simple queries
         if is_definitely_simple(prompt, context):
             decision = ActivationDecision(
                 should_activate=False,
                 reason="definitely_simple",
                 confidence=0.95,
+                execution_mode=ExecutionMode.FAST,
             )
-            self._finalize_decision(decision, start)
+            self._finalize_decision(decision, start_time)
             return decision
 
         # Extract complexity signals
@@ -223,8 +421,9 @@ class AutoActivator:
                 reason="large_context",
                 confidence=0.9,
                 signals=signals,
+                execution_mode=ExecutionMode.THOROUGH,
             )
-            self._finalize_decision(decision, start)
+            self._finalize_decision(decision, start_time)
             return decision
 
         # Use complexity classifier
@@ -233,14 +432,24 @@ class AutoActivator:
         # Calculate confidence based on signal strength
         confidence = self._calculate_confidence(signals, context)
 
+        # Determine execution mode based on complexity
+        if should_activate:
+            if signals.requires_cross_context_reasoning or signals.debugging_task:
+                exec_mode = ExecutionMode.BALANCED
+            else:
+                exec_mode = ExecutionMode.FAST
+        else:
+            exec_mode = ExecutionMode.FAST
+
         decision = ActivationDecision(
             should_activate=should_activate,
             reason=reason,
             confidence=confidence,
             signals=signals,
+            execution_mode=exec_mode,
         )
 
-        self._finalize_decision(decision, start)
+        self._finalize_decision(decision, start_time)
         return decision
 
     def _calculate_confidence(
@@ -297,6 +506,8 @@ class AutoActivator:
         """
         Create an orchestration plan from an activation decision.
 
+        Implements: SPEC-14.01-14.02 for micro mode plans
+
         Args:
             decision: The activation decision
 
@@ -304,31 +515,47 @@ class AutoActivator:
             OrchestrationPlan if activated, None otherwise
         """
         if not decision.should_activate:
-            return None
+            return OrchestrationPlan.bypass(reason=decision.reason)
 
-        # Build plan based on preferences and signals
+        # SPEC-14.01-14.02: Create micro mode plan
+        if decision.execution_mode == ExecutionMode.MICRO:
+            primary_model = self.preferences.preferred_model or "sonnet"
+            plan = OrchestrationPlan.micro(
+                reason=decision.reason,
+                parent_model=primary_model,
+            )
+            decision.plan = plan
+            return plan
+
+        # Non-micro modes: use strategy-based planning
         from .smart_router import ModelTier
 
-        # Determine model tier from preferences
-        model_tier = ModelTier.POWERFUL
-        primary_model = self.preferences.preferred_model or "claude-sonnet-4-20250514"
+        # Map execution mode to strategy
+        strategy_map = {
+            ExecutionMode.FAST: ExecutionStrategy.DIRECT_RESPONSE,
+            ExecutionMode.BALANCED: ExecutionStrategy.DISCOVERY,
+            ExecutionMode.THOROUGH: ExecutionStrategy.RECURSIVE_DEBUG,
+        }
+        strategy = strategy_map.get(decision.execution_mode, ExecutionStrategy.DISCOVERY)
 
-        # Adjust depth based on confidence and preferences
-        depth = min(self.preferences.max_depth, 2)
-        if decision.confidence < 0.7:
-            depth = 1  # Lower depth for uncertain activations
-
-        plan = OrchestrationPlan(
-            activate_rlm=True,
+        # Build plan from strategy
+        plan = OrchestrationPlan.from_strategy(
+            strategy=strategy,
             activation_reason=decision.reason,
-            model_tier=model_tier,
-            primary_model=primary_model,
-            depth_budget=depth,
-            execution_mode=self.preferences.execution_mode,
-            tool_access=self.preferences.tool_access,
-            max_tokens=self.preferences.budget_tokens,
-            max_cost_dollars=self.preferences.budget_dollars,
         )
+
+        # Apply user preferences
+        if self.preferences.preferred_model:
+            plan.primary_model = self.preferences.preferred_model
+
+        if self.preferences.max_depth < plan.depth_budget:
+            plan.depth_budget = self.preferences.max_depth
+
+        if self.preferences.budget_tokens:
+            plan.max_tokens = self.preferences.budget_tokens
+
+        if self.preferences.budget_dollars:
+            plan.max_cost_dollars = self.preferences.budget_dollars
 
         decision.plan = plan
         return plan
@@ -388,9 +615,12 @@ def check_auto_activation(
 __all__ = [
     "ActivationCallback",
     "ActivationDecision",
+    "ActivationMode",
     "ActivationStats",
     "ActivationThresholds",
     "AutoActivator",
+    "FAST_PATH_PATTERNS",
     "check_auto_activation",
     "get_auto_activator",
+    "is_fast_path_query",
 ]

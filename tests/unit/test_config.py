@@ -29,12 +29,19 @@ class TestActivationConfig:
     """Tests for ActivationConfig."""
 
     def test_default_values(self):
-        """Has expected default values."""
+        """Has expected default values (SPEC-14.10-14.15)."""
         config = ActivationConfig()
 
-        assert config.mode == "complexity"
+        # SPEC-14.11: Default mode is micro for always-on RLM
+        assert config.mode == "micro"
         assert config.fallback_token_threshold == 80000
         assert config.complexity_score_threshold == 2
+        # SPEC-14.30: Fast-path bypass enabled by default
+        assert config.fast_path_enabled is True
+        # SPEC-14.20: Escalation enabled by default
+        assert config.escalation_enabled is True
+        # SPEC-14.62: Session token budget
+        assert config.session_budget_tokens == 500_000
 
     def test_custom_values(self):
         """Can create with custom values."""
@@ -50,7 +57,7 @@ class TestActivationConfig:
 
     def test_mode_options(self):
         """All mode options are valid."""
-        for mode in ["complexity", "always", "manual", "token"]:
+        for mode in ["micro", "complexity", "always", "manual", "token"]:
             config = ActivationConfig(mode=mode)
             assert config.mode == mode
 
@@ -199,7 +206,8 @@ class TestRLMConfig:
         """Load from nonexistent file returns defaults."""
         config = RLMConfig.load(Path("/nonexistent/path/config.json"))
 
-        assert config.activation.mode == "complexity"
+        # SPEC-14.11: Default mode is micro
+        assert config.activation.mode == "micro"
         assert config.depth.max == 3
 
     def test_load_from_file(self):
@@ -278,8 +286,8 @@ class TestRLMConfig:
             config = RLMConfig.load(config_path)
 
             assert config.depth.max == 10
-            # Other sections should be defaults
-            assert config.activation.mode == "complexity"
+            # Other sections should be defaults (SPEC-14.11: micro mode)
+            assert config.activation.mode == "micro"
             assert config.models.root_model == "opus"
         finally:
             config_path.unlink()
@@ -293,7 +301,8 @@ class TestDefaultConfig:
         assert isinstance(default_config, RLMConfig)
 
     def test_default_config_has_expected_values(self):
-        """default_config has expected default values."""
-        assert default_config.activation.mode == "complexity"
+        """default_config has expected default values (SPEC-14.11)."""
+        # SPEC-14.11: Default mode is micro for always-on RLM
+        assert default_config.activation.mode == "micro"
         assert default_config.depth.max == 3
         assert default_config.models.root_model == "opus"

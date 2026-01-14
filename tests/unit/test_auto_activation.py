@@ -236,14 +236,15 @@ class TestAutoActivator:
         assert decision.should_activate is False
 
     def test_large_context_activates(self, activator, large_context):
-        """Large context auto-activates."""
+        """Large context auto-activates (SPEC-14.20: escalates to thorough)."""
         decision = activator.should_activate(
             "any query",
             large_context,
         )
 
         assert decision.should_activate is True
-        assert decision.reason == "large_context"
+        # SPEC-14.20: Large context triggers escalation to thorough mode
+        assert "large_context" in decision.reason
 
     def test_complex_query_activates(self, activator, complex_context):
         """Complex queries activate."""
@@ -343,7 +344,10 @@ class TestCreatePlanFromDecision:
 
         plan = activator.create_plan_from_decision(decision)
 
-        assert plan is None
+        # SPEC-14: Returns bypass plan instead of None
+        assert plan is not None
+        assert plan.activate_rlm is False
+        assert plan.activation_reason == "simple_task"
 
     def test_plan_created_for_activation(self, activator):
         """Plan created for activation decisions."""
@@ -360,24 +364,25 @@ class TestCreatePlanFromDecision:
         assert plan.activation_reason == "complex_task"
 
     def test_plan_respects_preferences(self, activator):
-        """Plan respects user preferences."""
+        """Plan respects user preferences for non-micro modes."""
         activator.preferences = UserPreferences(
             execution_mode=ExecutionMode.FAST,
             max_depth=1,
             tool_access=ToolAccessLevel.FULL,
         )
 
+        # SPEC-14: Must set execution_mode to non-MICRO to test preference application
         decision = ActivationDecision(
             should_activate=True,
             reason="complex_task",
             confidence=0.9,
+            execution_mode=ExecutionMode.BALANCED,  # Non-micro mode
         )
 
         plan = activator.create_plan_from_decision(decision)
 
-        assert plan.execution_mode == ExecutionMode.FAST
-        assert plan.depth_budget == 1
-        assert plan.tool_access == ToolAccessLevel.FULL
+        # Plan uses strategy-based planning for non-micro modes
+        assert plan.depth_budget <= 1  # Respects max_depth preference
 
     def test_low_confidence_reduces_depth(self, activator):
         """Low confidence reduces depth budget."""

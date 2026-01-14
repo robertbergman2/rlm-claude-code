@@ -2,6 +2,7 @@
 REPL environment for RLM context manipulation.
 
 Implements: Spec §4 REPL Environment Design
+Implements: Spec SPEC-14.03-14.04 for micro mode restrictions
 """
 
 from __future__ import annotations
@@ -10,7 +11,7 @@ import json
 import re
 import subprocess
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from RestrictedPython import compile_restricted, safe_builtins
 from RestrictedPython.Eval import default_guarded_getiter
@@ -21,6 +22,29 @@ from RestrictedPython.Guards import (
 
 from .tokenization import partition_content_by_tokens
 from .types import DeferredBatch, DeferredOperation, ExecutionResult, SessionContext
+
+# REPL function access levels (SPEC-14.03-14.04)
+REPLAccessLevel = Literal["micro", "standard", "full"]
+
+# Functions available in micro mode (SPEC-14.03, SPEC-14.52)
+MICRO_MODE_FUNCTIONS = frozenset({
+    "peek",
+    "search",
+    "summarize_local",
+    "memory_query",
+    "memory_add_fact",  # SPEC-14.52: Micro mode can store insights
+})
+
+# Functions NOT available in micro mode (SPEC-14.04)
+MICRO_MODE_BLOCKED = frozenset({
+    "llm",
+    "recursive_llm",
+    "recursive_query",
+    "llm_batch",
+    "summarize",  # Uses LLM
+    "map_reduce",
+    "find_relevant",  # Can use LLM scoring
+})
 
 if TYPE_CHECKING:
     from .memory_store import MemoryStore
@@ -88,6 +112,7 @@ class RLMEnvironment:
         context: SessionContext,
         recursive_handler: RecursiveREPL | None = None,
         use_restricted: bool = True,
+        access_level: REPLAccessLevel = "standard",
     ):
         """
         Initialize REPL environment with context.
@@ -96,12 +121,18 @@ class RLMEnvironment:
             context: Session context to externalize
             recursive_handler: Handler for recursive calls (depth>0)
             use_restricted: Whether to use RestrictedPython (default True)
+            access_level: Function access level ("micro", "standard", "full")
+                          - "micro": SPEC-14.03 restricted functions only
+                          - "standard": All REPL functions except tool access
+                          - "full": All REPL functions including tool access
 
         Implements: Spec §4.1 Sandbox Architecture
+        Implements: Spec SPEC-14.03-14.04 for micro mode
         """
         self.context = context
         self.recursive_handler = recursive_handler
         self.use_restricted = use_restricted
+        self.access_level = access_level
 
         # Build safe builtins
         self._safe_builtins = self._build_safe_builtins()
@@ -126,27 +157,17 @@ class RLMEnvironment:
                 {"tool": o.tool_name, "content": o.content} for o in context.tool_outputs
             ],
             "working_memory": context.working_memory.copy(),
-            # Helper functions
-            "peek": self._peek,
-            "search": self._search,
-            "summarize": self._summarize,
-            "recursive_query": self._recursive_query,
-            "recursive_llm": self._recursive_query,
-            "llm": self._recursive_query,  # Shorthand alias
-            "llm_batch": self._llm_batch,  # Parallel LLM calls
-            # Advanced REPL functions (SPEC-01)
-            "map_reduce": self._map_reduce,
-            "find_relevant": self._find_relevant,
-            "extract_functions": self._extract_functions,
-            # Safe subprocess execution
-            "run_tool": self._run_tool,
             # Standard library (safe modules)
             "re": re,
             "json": json,
         }
 
-        # Add extended tooling
-        self._add_extended_tooling()
+        # Add helper functions based on access level (SPEC-14.03-14.04)
+        self._add_helper_functions()
+
+        # Add extended tooling (except in micro mode)
+        if access_level != "micro":
+            self._add_extended_tooling()
 
         # Local namespace for user variables
         self.locals: dict[str, Any] = {}
@@ -224,6 +245,106 @@ class RLMEnvironment:
             builtins.pop(blocked, None)
 
         return builtins
+
+    def _add_helper_functions(self) -> None:
+        """
+        Add helper functions to globals based on access level.
+
+        Implements: Spec SPEC-14.03-14.04 for micro mode restrictions
+
+        Access levels:
+        - "micro": Only peek, search, summarize_local, memory_query
+        - "standard": All REPL functions
+        - "full": All REPL functions including tool access
+        """
+        # Functions available at all access levels (SPEC-14.03)
+        self.globals["peek"] = self._peek
+        self.globals["search"] = self._search
+        self.globals["summarize_local"] = self._summarize_local
+        # Note: memory_query is added via enable_memory()
+
+        # Functions NOT available in micro mode (SPEC-14.04)
+        if self.access_level != "micro":
+            # LLM-based functions
+            self.globals["summarize"] = self._summarize
+            self.globals["recursive_query"] = self._recursive_query
+            self.globals["recursive_llm"] = self._recursive_query
+            self.globals["llm"] = self._recursive_query  # Shorthand alias
+            self.globals["llm_batch"] = self._llm_batch  # Parallel LLM calls
+            # Advanced REPL functions (SPEC-01)
+            self.globals["map_reduce"] = self._map_reduce
+            self.globals["find_relevant"] = self._find_relevant
+            self.globals["extract_functions"] = self._extract_functions
+            # Safe subprocess execution (standard and full modes)
+            self.globals["run_tool"] = self._run_tool
+
+    def _summarize_local(self, var: Any, max_chars: int = 500) -> str:
+        """
+        Summarize a variable locally without LLM calls.
+
+        Implements: Spec SPEC-14.03 - Truncation-based summary for micro mode
+
+        This function provides a quick summary by:
+        1. Converting to string if not already
+        2. Truncating to max_chars
+        3. Adding ellipsis if truncated
+        4. For lists/dicts, showing count and sample
+
+        Args:
+            var: Variable to summarize
+            max_chars: Maximum characters in summary (default 500)
+
+        Returns:
+            String summary of the variable
+        """
+        if isinstance(var, str):
+            if len(var) <= max_chars:
+                return var
+            return var[:max_chars] + f"... [{len(var)} chars total]"
+
+        elif isinstance(var, list):
+            count = len(var)
+            if count == 0:
+                return "[] (empty list)"
+            # Show first few items
+            preview_items = []
+            chars_used = 0
+            for item in var[:10]:
+                item_str = repr(item)[:100]
+                if chars_used + len(item_str) > max_chars - 50:
+                    break
+                preview_items.append(item_str)
+                chars_used += len(item_str)
+            preview = ", ".join(preview_items)
+            if count > len(preview_items):
+                return f"[{preview}, ...] ({count} items total)"
+            return f"[{preview}]"
+
+        elif isinstance(var, dict):
+            count = len(var)
+            if count == 0:
+                return "{} (empty dict)"
+            # Show first few key-value pairs
+            preview_items = []
+            chars_used = 0
+            for key, value in list(var.items())[:10]:
+                item_str = f"{repr(key)}: {repr(value)[:50]}"
+                if chars_used + len(item_str) > max_chars - 50:
+                    break
+                preview_items.append(item_str)
+                chars_used += len(item_str)
+            preview = ", ".join(preview_items)
+            if count > len(preview_items):
+                return f"{{{preview}, ...}} ({count} keys total)"
+            return f"{{{preview}}}"
+
+        else:
+            # For other types, convert to string and truncate
+            s = str(var)
+            type_name = type(var).__name__
+            if len(s) <= max_chars:
+                return f"({type_name}) {s}"
+            return f"({type_name}) {s[:max_chars]}... [{len(s)} chars total]"
 
     def _add_extended_tooling(self) -> None:
         """
@@ -1451,10 +1572,49 @@ async def lint_snippet(code: str, timeout: float = 30.0) -> dict[str, Any]:
     }
 
 
+def create_micro_environment(
+    context: SessionContext,
+    use_restricted: bool = True,
+) -> RLMEnvironment:
+    """
+    Create a micro-mode REPL environment with restricted functions.
+
+    Implements: Spec SPEC-14.03-14.04
+
+    Micro mode only exposes low-cost functions:
+    - peek(var, start, end) - View context slice
+    - search(var, pattern) - Pattern search (no LLM)
+    - summarize_local(var, max_chars) - Truncation-based summary
+    - memory_query(query) - Memory retrieval (if enabled)
+
+    Functions NOT available in micro mode:
+    - llm() - Recursive sub-queries
+    - llm_batch() - Parallel sub-queries
+    - map_reduce() - LLM-based aggregation
+
+    Args:
+        context: Session context to externalize
+        use_restricted: Whether to use RestrictedPython (default True)
+
+    Returns:
+        RLMEnvironment configured for micro mode
+    """
+    return RLMEnvironment(
+        context=context,
+        recursive_handler=None,  # No recursive calls in micro mode
+        use_restricted=use_restricted,
+        access_level="micro",
+    )
+
+
 __all__ = [
     "RLMEnvironment",
     "RLMSecurityError",
     "ALLOWED_SUBPROCESSES",
+    "MICRO_MODE_FUNCTIONS",
+    "MICRO_MODE_BLOCKED",
+    "REPLAccessLevel",
+    "create_micro_environment",
     "typecheck_snippet",
     "lint_snippet",
 ]

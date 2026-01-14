@@ -374,10 +374,17 @@ class TestTierModels:
     """Tests for TIER_MODELS configuration."""
 
     def test_all_tiers_have_models(self):
-        """All model tiers have associated models."""
+        """All model tiers (except INHERIT) have associated models."""
         for tier in ModelTier:
+            # INHERIT is a special tier that uses parent session model (SPEC-14.02)
+            if tier == ModelTier.INHERIT:
+                continue
             assert tier in TIER_MODELS
             assert len(TIER_MODELS[tier]) > 0
+
+    def test_inherit_tier_not_in_tier_models(self):
+        """INHERIT tier is intentionally not in TIER_MODELS (SPEC-14.02)."""
+        assert ModelTier.INHERIT not in TIER_MODELS
 
     def test_fast_tier_models(self):
         """Fast tier includes fast models."""
@@ -392,10 +399,11 @@ class TestTierModels:
 
 
 class TestExecutionStrategy:
-    """Tests for ExecutionStrategy enum (SPEC-12.06)."""
+    """Tests for ExecutionStrategy enum (SPEC-12.06, SPEC-14.01)."""
 
     def test_all_strategies_exist(self):
         """All expected execution strategies exist."""
+        assert ExecutionStrategy.MICRO  # SPEC-14.01
         assert ExecutionStrategy.DIRECT_RESPONSE
         assert ExecutionStrategy.DISCOVERY
         assert ExecutionStrategy.EXHAUSTIVE_SEARCH
@@ -406,6 +414,7 @@ class TestExecutionStrategy:
 
     def test_strategy_values(self):
         """Strategy values are correct strings."""
+        assert ExecutionStrategy.MICRO.value == "micro"  # SPEC-14.01
         assert ExecutionStrategy.DIRECT_RESPONSE.value == "direct"
         assert ExecutionStrategy.DISCOVERY.value == "discovery"
         assert ExecutionStrategy.EXHAUSTIVE_SEARCH.value == "exhaustive_search"
@@ -415,8 +424,8 @@ class TestExecutionStrategy:
         assert ExecutionStrategy.CONTINUATION.value == "continuation"
 
     def test_strategy_count(self):
-        """Seven strategies matching seven JTBDs."""
-        assert len(ExecutionStrategy) == 7
+        """Eight strategies: seven JTBDs plus MICRO (SPEC-14.01)."""
+        assert len(ExecutionStrategy) == 8
 
 
 class TestStrategyDefaults:

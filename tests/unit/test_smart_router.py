@@ -50,9 +50,14 @@ class TestModelTier:
 
     def test_all_tiers_exist(self):
         """All expected tiers exist."""
-        expected = ["fast", "balanced", "powerful", "code_specialist"]
+        # INHERIT added in SPEC-14.02 for micro mode
+        expected = ["fast", "balanced", "powerful", "code_specialist", "inherit"]
         actual = [mt.value for mt in ModelTier]
         assert set(expected) == set(actual)
+
+    def test_inherit_tier_for_micro_mode(self):
+        """INHERIT tier exists for micro mode (SPEC-14.02)."""
+        assert ModelTier.INHERIT.value == "inherit"
 
 
 class TestModelCatalog:

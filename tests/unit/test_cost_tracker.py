@@ -445,3 +445,227 @@ class TestEstimateTokens:
         # Should account for content + overhead
         assert tokens > 0
         assert tokens > (600 + 300 + 350) // 4  # Minimum from content
+
+
+# =============================================================================
+# SPEC-14.60-14.65: Session Budget Tests
+# =============================================================================
+
+
+class TestSessionBudget:
+    """Tests for SessionBudget (SPEC-14.60-14.65)."""
+
+    def test_default_budget_500k_tokens(self):
+        """Default budget is 500K tokens (SPEC-14.62)."""
+        from src.cost_tracker import SessionBudget
+
+        budget = SessionBudget()
+
+        assert budget.budget_tokens == 500_000
+
+    def test_tracks_tokens_not_dollars(self):
+        """Budget tracks in tokens not dollars (SPEC-14.61)."""
+        from src.cost_tracker import SessionBudget
+
+        budget = SessionBudget()
+        budget.record_tokens(1000, mode="micro")
+
+        assert budget.total_tokens == 1000
+        # No dollar tracking on SessionBudget
+
+    def test_tracks_cumulative_session_cost(self):
+        """Tracks cumulative session cost (SPEC-14.60)."""
+        from src.cost_tracker import SessionBudget
+
+        budget = SessionBudget()
+        budget.record_tokens(1000, mode="micro")
+        budget.record_tokens(2000, mode="balanced")
+        budget.record_tokens(3000, mode="thorough")
+
+        assert budget.total_tokens == 6000
+
+    def test_warning_at_50_percent(self):
+        """Warning at 50% utilization (SPEC-14.63)."""
+        from src.cost_tracker import SessionBudget
+
+        budget = SessionBudget(budget_tokens=10_000)
+        warnings = budget.record_tokens(5000, mode="micro")
+
+        assert len(warnings) == 1
+        assert warnings[0].threshold_percent == 50
+
+    def test_warning_at_75_percent(self):
+        """Warning at 75% utilization (SPEC-14.63)."""
+        from src.cost_tracker import SessionBudget
+
+        budget = SessionBudget(budget_tokens=10_000)
+        budget.record_tokens(5000, mode="micro")  # 50%
+        warnings = budget.record_tokens(2500, mode="micro")  # 75%
+
+        assert len(warnings) == 1
+        assert warnings[0].threshold_percent == 75
+
+    def test_warning_at_90_percent(self):
+        """Warning at 90% utilization (SPEC-14.63)."""
+        from src.cost_tracker import SessionBudget
+
+        budget = SessionBudget(budget_tokens=10_000)
+        budget.record_tokens(7500, mode="micro")  # 75%
+        warnings = budget.record_tokens(1500, mode="micro")  # 90%
+
+        assert len(warnings) == 1
+        assert warnings[0].threshold_percent == 90
+
+    def test_warnings_not_repeated(self):
+        """Same warning threshold not emitted twice."""
+        from src.cost_tracker import SessionBudget
+
+        budget = SessionBudget(budget_tokens=10_000)
+        warnings1 = budget.record_tokens(5000, mode="micro")  # 50%
+        warnings2 = budget.record_tokens(100, mode="micro")  # Still 50%
+
+        assert len(warnings1) == 1
+        assert len(warnings2) == 0  # Not repeated
+
+    def test_can_escalate_within_budget(self):
+        """Can escalate if within budget (SPEC-14.64)."""
+        from src.cost_tracker import SessionBudget
+
+        budget = SessionBudget(budget_tokens=500_000)
+        budget.record_tokens(100_000, mode="micro")
+
+        can, reason = budget.can_escalate("thorough")
+
+        assert can is True
+        assert reason is None
+
+    def test_cannot_escalate_exceeds_budget(self):
+        """Cannot escalate if would exceed budget (SPEC-14.64)."""
+        from src.cost_tracker import SessionBudget
+
+        budget = SessionBudget(budget_tokens=50_000)
+        budget.record_tokens(40_000, mode="micro")
+
+        can, reason = budget.can_escalate("thorough")  # Needs 100K
+
+        assert can is False
+        assert "exceed budget" in reason
+
+    def test_tracks_by_mode(self):
+        """Tracks tokens by execution mode (SPEC-14.65)."""
+        from src.cost_tracker import SessionBudget
+
+        budget = SessionBudget()
+        budget.record_tokens(1000, mode="micro")
+        budget.record_tokens(20000, mode="balanced")
+        budget.record_tokens(50000, mode="thorough")
+
+        breakdown = budget.get_mode_breakdown()
+
+        assert breakdown["micro"]["tokens_used"] == 1000
+        assert breakdown["balanced"]["tokens_used"] == 20000
+        assert breakdown["thorough"]["tokens_used"] == 50000
+
+    def test_mode_over_target_tracking(self):
+        """Tracks when mode exceeds target (SPEC-14.65)."""
+        from src.cost_tracker import SessionBudget
+
+        budget = SessionBudget()
+        budget.record_tokens(5000, mode="micro")  # Target is 2K
+
+        breakdown = budget.get_mode_breakdown()
+
+        assert breakdown["micro"]["over_target"] is True
+
+    def test_warning_callback(self):
+        """Warning callbacks are invoked."""
+        from src.cost_tracker import SessionBudget
+
+        budget = SessionBudget(budget_tokens=10_000)
+        warnings_received = []
+        budget.on_warning(lambda w: warnings_received.append(w))
+
+        budget.record_tokens(5000, mode="micro")
+
+        assert len(warnings_received) == 1
+        assert warnings_received[0].threshold_percent == 50
+
+    def test_get_summary(self):
+        """get_summary returns expected structure."""
+        from src.cost_tracker import SessionBudget
+
+        budget = SessionBudget(budget_tokens=100_000)
+        budget.record_tokens(50_000, mode="micro")
+
+        summary = budget.get_summary()
+
+        assert summary["total_tokens"] == 50_000
+        assert summary["budget_tokens"] == 100_000
+        assert summary["remaining_tokens"] == 50_000
+        assert summary["utilization_percent"] == 50
+        assert "by_mode" in summary
+
+    def test_reset(self):
+        """Reset clears all tracking."""
+        from src.cost_tracker import SessionBudget
+
+        budget = SessionBudget(budget_tokens=10_000)
+        budget.record_tokens(5000, mode="micro")
+        budget.reset()
+
+        assert budget.total_tokens == 0
+        assert budget.remaining_tokens == 10_000
+
+    def test_get_available_for_mode(self):
+        """get_available_for_mode returns correct value."""
+        from src.cost_tracker import SessionBudget
+
+        budget = SessionBudget(budget_tokens=100_000)
+        budget.record_tokens(99_000, mode="micro")
+
+        # Only 1K remaining, but balanced wants 25K
+        available = budget.get_available_for_mode("balanced")
+
+        assert available == 1000  # min(remaining, target)
+
+
+class TestCreateSessionBudget:
+    """Tests for create_session_budget function."""
+
+    def test_creates_with_default_budget(self):
+        """Creates with 500K default budget."""
+        from src.cost_tracker import create_session_budget
+
+        budget = create_session_budget()
+
+        assert budget.budget_tokens == 500_000
+
+    def test_creates_with_custom_budget(self):
+        """Creates with custom budget."""
+        from src.cost_tracker import create_session_budget
+
+        budget = create_session_budget(budget_tokens=1_000_000)
+
+        assert budget.budget_tokens == 1_000_000
+
+
+class TestModeTokenTargets:
+    """Tests for MODE_TOKEN_TARGETS constants."""
+
+    def test_micro_target_under_2k(self):
+        """Micro mode target is <2K tokens (SPEC-14.65)."""
+        from src.cost_tracker import MODE_TOKEN_TARGETS
+
+        assert MODE_TOKEN_TARGETS["micro"] == 2_000
+
+    def test_balanced_target_under_25k(self):
+        """Balanced mode target is <25K tokens (SPEC-14.65)."""
+        from src.cost_tracker import MODE_TOKEN_TARGETS
+
+        assert MODE_TOKEN_TARGETS["balanced"] == 25_000
+
+    def test_thorough_target_under_100k(self):
+        """Thorough mode target is <100K tokens (SPEC-14.65)."""
+        from src.cost_tracker import MODE_TOKEN_TARGETS
+
+        assert MODE_TOKEN_TARGETS["thorough"] == 100_000

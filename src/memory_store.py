@@ -12,6 +12,7 @@ import sqlite3
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
+from collections.abc import Callable
 from typing import Any
 
 # =============================================================================
@@ -1938,6 +1939,149 @@ class MemoryStore:
         )
 
 
+    # =========================================================================
+    # Micro Mode Memory Access (SPEC-14.50-14.55)
+    # =========================================================================
+
+    def retrieve_for_query(
+        self,
+        query: str,
+        k: int = 5,
+        use_embedding: bool = False,
+    ) -> list[dict[str, Any]]:
+        """
+        Retrieve relevant facts for a query.
+
+        Implements: SPEC-14.51, SPEC-14.53, SPEC-14.54
+
+        In micro mode (use_embedding=False), uses keyword-based FTS5 search.
+        On escalation (use_embedding=True), could use embedding-based retrieval.
+
+        Args:
+            query: The user's query to find relevant facts for
+            k: Maximum number of facts to return
+            use_embedding: If True, use embedding-based retrieval (SPEC-14.55)
+
+        Returns:
+            List of fact dicts with id, content, confidence, score
+        """
+        if use_embedding:
+            # SPEC-14.55: Full embedding-based retrieval on escalation
+            # For now, fall back to FTS (embedding implementation is separate)
+            return self._retrieve_with_fts(query, k)
+
+        # SPEC-14.54: Keyword matching in micro mode
+        return self._retrieve_with_fts(query, k)
+
+    def _retrieve_with_fts(self, query: str, k: int) -> list[dict[str, Any]]:
+        """
+        Retrieve relevant facts using FTS5 keyword search.
+
+        Implements: SPEC-14.53, SPEC-14.54
+        """
+        # Extract keywords from query for FTS
+        keywords = self._extract_keywords(query)
+        if not keywords:
+            return []
+
+        # Search for facts matching keywords
+        results = self.search(
+            query=" OR ".join(keywords),
+            k=k,
+            type="fact",
+            min_confidence=0.3,  # Include lower-confidence facts
+        )
+
+        return [
+            {
+                "id": r.node_id,
+                "content": r.content,
+                "score": r.bm25_score,
+                "snippet": r.snippet,
+            }
+            for r in results
+        ]
+
+    def _extract_keywords(self, query: str) -> list[str]:
+        """
+        Extract significant keywords from a query for FTS search.
+
+        Simple keyword extraction without LLM (SPEC-14.53).
+        """
+        # Common stop words to filter out
+        stop_words = frozenset({
+            "a", "an", "the", "is", "are", "was", "were", "be", "been",
+            "being", "have", "has", "had", "do", "does", "did", "will",
+            "would", "could", "should", "may", "might", "must", "shall",
+            "can", "need", "dare", "ought", "used", "to", "of", "in",
+            "for", "on", "with", "at", "by", "from", "as", "into",
+            "through", "during", "before", "after", "above", "below",
+            "between", "under", "again", "further", "then", "once",
+            "here", "there", "when", "where", "why", "how", "all",
+            "each", "few", "more", "most", "other", "some", "such",
+            "no", "nor", "not", "only", "own", "same", "so", "than",
+            "too", "very", "just", "and", "but", "if", "or", "because",
+            "until", "while", "this", "that", "these", "those", "what",
+            "which", "who", "whom", "whose", "i", "me", "my", "we", "us",
+            "you", "your", "he", "him", "his", "she", "her", "it", "its",
+            "they", "them", "their",
+        })
+
+        # Tokenize and filter
+        import re
+        words = re.findall(r'\b[a-zA-Z_][a-zA-Z0-9_]*\b', query.lower())
+        keywords = [w for w in words if w not in stop_words and len(w) > 2]
+
+        return keywords[:10]  # Limit to top 10 keywords
+
+    def micro_add_fact(
+        self,
+        content: str,
+        confidence: float = 0.7,
+    ) -> str:
+        """
+        Add a fact in micro mode (no LLM processing).
+
+        Implements: SPEC-14.52
+
+        Args:
+            content: The factual statement to store
+            confidence: Confidence score 0.0-1.0 (default 0.7)
+
+        Returns:
+            Node ID
+        """
+        return self.add_fact(
+            content=content,
+            confidence=confidence,
+            tier="task",  # Micro mode facts start at task tier
+        )
+
+
+def create_micro_memory_loader(
+    store: MemoryStore,
+    query: str,
+    k: int = 5,
+) -> Callable[[], list[dict[str, Any]]]:
+    """
+    Create a lazy memory loader for micro mode context.
+
+    Implements: SPEC-14.51
+
+    Args:
+        store: Memory store instance
+        query: Query to retrieve relevant facts for
+        k: Maximum number of facts to return
+
+    Returns:
+        Callable that retrieves memory when invoked
+    """
+    def loader() -> list[dict[str, Any]]:
+        return store.retrieve_for_query(query, k=k, use_embedding=False)
+
+    return loader
+
+
 __all__ = [
     "MemoryStore",
     "Node",
@@ -1945,4 +2089,6 @@ __all__ = [
     "EvolutionLogEntry",
     "SearchResult",
     "ConfidenceUpdate",
+    # Micro mode (SPEC-14.50-14.55)
+    "create_micro_memory_loader",
 ]

@@ -26,8 +26,11 @@ class ExecutionMode(Enum):
     User execution preferences.
 
     Controls the cost/speed/quality tradeoffs.
+
+    Implements: SPEC-14.01-14.02 for MICRO mode.
     """
 
+    MICRO = "micro"  # Minimal cost, REPL-only, no LLM sub-queries (SPEC-14.01)
     FAST = "fast"  # Minimize latency, use cheaper models, shallow depth
     BALANCED = "balanced"  # Default balance of speed and quality
     THOROUGH = "thorough"  # Maximize accuracy, deeper recursion allowed
@@ -51,8 +54,10 @@ class ExecutionStrategy(Enum):
     Execution strategy templates mapped to user JTBDs.
 
     Implements: SPEC-12.06 - Strategy Templates for OODA Decide Phase
+    Implements: SPEC-14.01 - MICRO strategy for always-on mode
 
     Each strategy corresponds to a Job-To-Be-Done from the JTBD analysis:
+    - MICRO: Minimal always-on mode (SPEC-14)
     - DIRECT_RESPONSE: Quick answers without RLM (JTBD-7)
     - DISCOVERY: Understand unfamiliar codebase (JTBD-2)
     - EXHAUSTIVE_SEARCH: Find all usages/instances (JTBD-3)
@@ -62,6 +67,7 @@ class ExecutionStrategy(Enum):
     - CONTINUATION: Resume previous work (JTBD-6)
     """
 
+    MICRO = "micro"  # SPEC-14: Always-on minimal mode
     DIRECT_RESPONSE = "direct"  # JTBD-7: Quick answers, bypass RLM
     DISCOVERY = "discovery"  # JTBD-2: Explore codebase structure
     EXHAUSTIVE_SEARCH = "exhaustive_search"  # JTBD-3: Find all instances
@@ -165,6 +171,15 @@ class DecisionConfidence:
 
 # Default configurations per execution mode
 MODE_DEFAULTS: dict[ExecutionMode, dict[str, Any]] = {
+    # SPEC-14.02: Micro mode - minimal cost, REPL-only, no LLM sub-queries
+    ExecutionMode.MICRO: {
+        "depth_budget": 1,
+        "tokens_per_depth": 5_000,
+        "model_tier": ModelTier.INHERIT,  # Use parent session model
+        "tool_access": ToolAccessLevel.REPL_ONLY,
+        "max_cost_dollars": 0.02,  # ~$0.01 at current rates
+        "max_cost_tokens": 2_000,  # Token-based tracking (SPEC-14.61)
+    },
     ExecutionMode.FAST: {
         "depth_budget": 1,
         "tokens_per_depth": 10_000,
@@ -199,6 +214,20 @@ TIER_MODELS: dict[ModelTier, list[str]] = {
 # Strategy defaults based on JTBD analysis
 # Each strategy has recommended settings and REPL function hints
 STRATEGY_DEFAULTS: dict[ExecutionStrategy, dict[str, Any]] = {
+    # SPEC-14.01-14.04: Micro mode - always-on with restricted REPL
+    ExecutionStrategy.MICRO: {
+        "activate_rlm": True,
+        "depth_budget": 1,
+        "model_tier": ModelTier.INHERIT,
+        "tool_access": ToolAccessLevel.REPL_ONLY,
+        "execution_mode": ExecutionMode.MICRO,
+        "hints": [
+            "Use peek() to view context slices",
+            "Use search() for pattern matching (no LLM)",
+            "Use memory_query() to retrieve facts",
+            "Escalate to balanced mode if complexity detected",
+        ],
+    },
     ExecutionStrategy.DIRECT_RESPONSE: {
         "activate_rlm": False,
         "depth_budget": 0,
@@ -472,6 +501,46 @@ class OrchestrationPlan:
         )
 
     @classmethod
+    def micro(
+        cls,
+        reason: str = "always_on_default",
+        parent_model: str = "sonnet",
+    ) -> OrchestrationPlan:
+        """
+        Create a micro mode plan (SPEC-14.01-14.02).
+
+        Micro mode is the always-on default with minimal cost:
+        - depth_budget=1
+        - max 5K tokens per depth
+        - REPL-only tool access (no LLM sub-queries)
+        - Uses parent session model (INHERIT tier)
+
+        Args:
+            reason: Why micro mode was activated
+            parent_model: Model to inherit from parent session
+
+        Returns:
+            OrchestrationPlan configured for micro mode
+        """
+        defaults = MODE_DEFAULTS[ExecutionMode.MICRO]
+        return cls(
+            activate_rlm=True,
+            activation_reason=reason,
+            model_tier=ModelTier.INHERIT,
+            primary_model=parent_model,
+            fallback_chain=[],
+            depth_budget=defaults["depth_budget"],
+            tokens_per_depth=defaults["tokens_per_depth"],
+            execution_mode=ExecutionMode.MICRO,
+            tool_access=defaults["tool_access"],
+            max_cost_dollars=defaults["max_cost_dollars"],
+            max_tokens=defaults.get("max_cost_tokens", 2000),
+            strategy=ExecutionStrategy.MICRO,
+            strategy_hints=list(STRATEGY_DEFAULTS[ExecutionStrategy.MICRO]["hints"]),
+            decision_confidence=DecisionConfidence.high(),
+        )
+
+    @classmethod
     def from_strategy(
         cls,
         strategy: ExecutionStrategy,
@@ -512,8 +581,21 @@ class OrchestrationPlan:
         if not defaults["activate_rlm"]:
             return cls.bypass(reason=activation_reason)
 
+        # Handle MICRO strategy specially (SPEC-14.01)
+        if strategy == ExecutionStrategy.MICRO:
+            # For micro mode, inherit from available models or default to sonnet
+            parent_model = "sonnet"
+            if available_models:
+                parent_model = available_models[0]
+            return cls.micro(reason=activation_reason, parent_model=parent_model)
+
         # Select primary model from available models
-        tier_models = TIER_MODELS.get(tier, TIER_MODELS[ModelTier.BALANCED])
+        # Handle INHERIT tier by falling back to BALANCED
+        if tier == ModelTier.INHERIT:
+            tier_models = TIER_MODELS[ModelTier.BALANCED]
+        else:
+            tier_models = TIER_MODELS.get(tier, TIER_MODELS[ModelTier.BALANCED])
+
         if available_models:
             candidates = [m for m in tier_models if m in available_models]
         else:

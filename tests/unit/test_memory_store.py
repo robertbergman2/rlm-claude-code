@@ -1865,3 +1865,160 @@ class TestConvenienceMethods:
 
         assert len(results) == 1
         assert "High" in results[0].content
+
+
+# =============================================================================
+# SPEC-14.50-14.55: Micro Mode Memory Integration Tests
+# =============================================================================
+
+
+class TestMicroModeMemoryIntegration:
+    """Tests for micro mode memory functionality (SPEC-14.50-14.55)."""
+
+    def test_retrieve_for_query_uses_fts(self, memory_store):
+        """retrieve_for_query uses keyword-based FTS search (SPEC-14.54)."""
+        memory_store.add_fact("Authentication uses JWT tokens")
+        memory_store.add_fact("Database connection uses pooling")
+        memory_store.add_fact("User login requires authentication")
+
+        results = memory_store.retrieve_for_query("authentication", k=5)
+
+        assert len(results) >= 1
+        assert any("authentication" in r["content"].lower() for r in results)
+
+    def test_retrieve_for_query_no_embedding_by_default(self, memory_store):
+        """Micro mode retrieval doesn't use embeddings (SPEC-14.53)."""
+        memory_store.add_fact("Test fact for micro mode")
+
+        # Should work without any embedding configuration
+        results = memory_store.retrieve_for_query("micro mode", k=5, use_embedding=False)
+
+        # This should not raise any errors
+        assert isinstance(results, list)
+
+    def test_retrieve_for_query_returns_dicts(self, memory_store):
+        """retrieve_for_query returns dicts with expected keys."""
+        memory_store.add_fact("Test content for retrieval")
+
+        results = memory_store.retrieve_for_query("content retrieval", k=5)
+
+        if results:  # May not find matches depending on FTS
+            result = results[0]
+            assert "id" in result
+            assert "content" in result
+            assert "score" in result
+
+    def test_retrieve_for_query_empty_query_returns_empty(self, memory_store):
+        """Empty query returns empty list."""
+        memory_store.add_fact("Some fact")
+
+        results = memory_store.retrieve_for_query("", k=5)
+
+        assert results == []
+
+    def test_micro_add_fact_creates_task_tier(self, memory_store):
+        """micro_add_fact stores facts at task tier (SPEC-14.52)."""
+        node_id = memory_store.micro_add_fact("Insight from micro mode")
+
+        node = memory_store.get_node(node_id)
+
+        assert node is not None
+        assert node.tier == "task"
+        assert node.type == "fact"
+
+    def test_micro_add_fact_default_confidence(self, memory_store):
+        """micro_add_fact uses 0.7 default confidence."""
+        node_id = memory_store.micro_add_fact("Some insight")
+
+        node = memory_store.get_node(node_id)
+
+        assert node.confidence == 0.7
+
+    def test_micro_add_fact_custom_confidence(self, memory_store):
+        """micro_add_fact accepts custom confidence."""
+        node_id = memory_store.micro_add_fact("High confidence insight", confidence=0.95)
+
+        node = memory_store.get_node(node_id)
+
+        assert node.confidence == 0.95
+
+    def test_extract_keywords_filters_stop_words(self, memory_store):
+        """Keyword extraction filters common stop words."""
+        keywords = memory_store._extract_keywords(
+            "What is the authentication method for the API?"
+        )
+
+        # Stop words should be filtered
+        assert "what" not in keywords
+        assert "the" not in keywords
+        assert "for" not in keywords
+
+        # Content words should remain
+        assert "authentication" in keywords
+        assert "method" in keywords
+        assert "api" in keywords
+
+    def test_extract_keywords_limits_count(self, memory_store):
+        """Keyword extraction limits to 10 keywords."""
+        long_query = " ".join([f"word{i}" for i in range(20)])
+
+        keywords = memory_store._extract_keywords(long_query)
+
+        assert len(keywords) <= 10
+
+
+class TestCreateMicroMemoryLoader:
+    """Tests for create_micro_memory_loader function."""
+
+    def test_returns_callable(self, memory_store):
+        """create_micro_memory_loader returns a callable."""
+        from src.memory_store import create_micro_memory_loader
+
+        loader = create_micro_memory_loader(memory_store, "test query")
+
+        assert callable(loader)
+
+    def test_loader_retrieves_facts(self, memory_store):
+        """Loader retrieves relevant facts when called."""
+        from src.memory_store import create_micro_memory_loader
+
+        memory_store.add_fact("Test fact about authentication")
+
+        loader = create_micro_memory_loader(memory_store, "authentication")
+        results = loader()
+
+        assert isinstance(results, list)
+
+    def test_loader_respects_k_parameter(self, memory_store):
+        """Loader respects the k limit parameter."""
+        from src.memory_store import create_micro_memory_loader
+
+        # Add multiple facts
+        for i in range(10):
+            memory_store.add_fact(f"Test fact number {i} about tokens")
+
+        loader = create_micro_memory_loader(memory_store, "tokens", k=3)
+        results = loader()
+
+        assert len(results) <= 3
+
+    def test_loader_is_lazy(self, memory_store):
+        """Loader doesn't execute until called."""
+        from src.memory_store import create_micro_memory_loader
+
+        call_count = [0]
+        original_retrieve = memory_store.retrieve_for_query
+
+        def tracking_retrieve(*args, **kwargs):
+            call_count[0] += 1
+            return original_retrieve(*args, **kwargs)
+
+        memory_store.retrieve_for_query = tracking_retrieve
+
+        # Creating loader shouldn't call retrieve
+        loader = create_micro_memory_loader(memory_store, "test")
+        assert call_count[0] == 0
+
+        # Calling loader should call retrieve
+        loader()
+        assert call_count[0] == 1

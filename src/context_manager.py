@@ -16,7 +16,9 @@ from typing import TYPE_CHECKING, Any
 from .types import Message, SessionContext, ToolOutput
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Generator, Iterator
+    from collections.abc import Generator, Iterator
+
+from collections.abc import Callable
 
 
 # Default memory limit for lazy context cache (100MB)
@@ -406,6 +408,136 @@ def create_lazy_context(
     return LazyContext(_context=context, _config=config)
 
 
+@dataclass
+class MicroModeContext:
+    """
+    Externalized context for micro mode REPL access.
+
+    Implements: SPEC-14.40-14.44 (Context Externalization for Micro Mode)
+
+    Provides the four standard variables that micro mode REPL can access:
+    - query: Current user query
+    - context: Available context (files, conversation)
+    - memory: Relevant memory facts (lazy loaded)
+    - prior_result: Previous turn result (if any)
+
+    All large content is lazy-loaded to ensure <100ms externalization overhead.
+    """
+
+    query: str
+    _context: SessionContext
+    _memory_loader: Callable[[], list[dict[str, Any]]] | None = None
+    prior_result: str | None = None
+    _lazy_context: LazyContextVariable | None = field(default=None, init=False)
+    _lazy_memory: LazyContextVariable | None = field(default=None, init=False)
+
+    def __post_init__(self) -> None:
+        """Initialize lazy loaders for large content."""
+        # Lazy load context to ensure <100ms overhead (SPEC-14.43)
+        self._lazy_context = LazyContextVariable(
+            loader=lambda: externalize_context(self._context),
+            max_memory_mb=50,  # Limit context cache
+        )
+
+        # Lazy load memory (SPEC-14.44)
+        if self._memory_loader is not None:
+            self._lazy_memory = LazyContextVariable(
+                loader=self._memory_loader,
+                max_memory_mb=10,  # Small limit for memory facts
+            )
+
+    @property
+    def context(self) -> dict[str, Any]:
+        """
+        Get externalized context (lazy loaded).
+
+        Implements: SPEC-14.41, SPEC-14.44
+
+        Returns:
+            Dict with conversation, files, tool_outputs, working_memory
+        """
+        if self._lazy_context is None:
+            return {}
+        return self._lazy_context.get()
+
+    @property
+    def memory(self) -> list[dict[str, Any]]:
+        """
+        Get relevant memory facts (lazy loaded).
+
+        Implements: SPEC-14.41, SPEC-14.44
+
+        Returns:
+            List of memory fact dicts
+        """
+        if self._lazy_memory is None:
+            return []
+        return self._lazy_memory.get()
+
+    def to_repl_vars(self) -> dict[str, Any]:
+        """
+        Convert to REPL variable dict.
+
+        Implements: SPEC-14.40
+
+        Returns:
+            Dict suitable for injection into REPL globals
+        """
+        return {
+            "query": self.query,
+            "context": self.context,
+            "memory": self.memory,
+            "prior_result": self.prior_result or "",
+        }
+
+    @property
+    def is_context_loaded(self) -> bool:
+        """Check if context has been accessed/loaded."""
+        return self._lazy_context is not None and self._lazy_context.is_loaded
+
+    @property
+    def is_memory_loaded(self) -> bool:
+        """Check if memory has been accessed/loaded."""
+        return self._lazy_memory is not None and self._lazy_memory.is_loaded
+
+
+def create_micro_context(
+    query: str,
+    session_context: SessionContext,
+    memory_loader: Callable[[], list[dict[str, Any]]] | None = None,
+    prior_result: str | None = None,
+) -> MicroModeContext:
+    """
+    Create a micro mode context for REPL access.
+
+    Implements: SPEC-14.40-14.44
+
+    Args:
+        query: Current user query
+        session_context: Full session context (lazy loaded)
+        memory_loader: Callable that returns memory facts (lazy loaded)
+        prior_result: Result from previous turn (if any)
+
+    Returns:
+        MicroModeContext with lazy-loaded content
+
+    Example:
+        >>> ctx = create_micro_context(
+        ...     query="What does this function do?",
+        ...     session_context=session.context,
+        ...     memory_loader=lambda: memory_store.query("function"),
+        ... )
+        >>> repl_vars = ctx.to_repl_vars()
+        >>> # Now REPL can access: query, context, memory, prior_result
+    """
+    return MicroModeContext(
+        query=query,
+        _context=session_context,
+        _memory_loader=memory_loader,
+        prior_result=prior_result,
+    )
+
+
 __all__ = [
     "externalize_context",
     "externalize_conversation",
@@ -418,4 +550,7 @@ __all__ = [
     "LazyContext",
     "create_lazy_context",
     "DEFAULT_MEMORY_LIMIT_MB",
+    # Micro mode context (SPEC-14.40-14.44)
+    "MicroModeContext",
+    "create_micro_context",
 ]
