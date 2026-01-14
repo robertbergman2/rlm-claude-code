@@ -28,6 +28,14 @@ This specification defines capabilities for the RLM-Claude-Code project, coverin
 | P3 | User Experience | [SPEC-11](./11-user-experience.md) | 📋 Planned |
 | P3 | Architecture Refactoring | [SPEC-12](./12-architecture.md) | 📋 Planned |
 
+### Phase 3: User Experience & Verification (Active/Deferred)
+
+| Priority | Component | Spec Document | Status |
+|----------|-----------|---------------|--------|
+| P0 | Rich Output Formatting | [SPEC-13](./13-rich-output.md) | 🚧 Active |
+| P0 | Always-On Micro-RLM | [SPEC-14](./14-always-on-rlm.md) | 🚧 Active |
+| P2 | Lean REPL Integration | [SPEC-15](./15-lean-repl.md) | ⏸️ Deferred |
+
 ## Dependencies
 
 ```
@@ -46,6 +54,11 @@ SPEC-09 (Capabilities) ───► SPEC-02, SPEC-03
 SPEC-10 (Reliability) ────► SPEC-05
 SPEC-11 (User Experience) ► SPEC-04, SPEC-06
 SPEC-12 (Architecture) ───► All prior specs
+
+Phase 3 (UX & Verification):
+SPEC-13 (Rich Output) ────► SPEC-04, SPEC-05
+SPEC-14 (Always-On) ──────► SPEC-05, SPEC-06, SPEC-13
+SPEC-15 (Lean REPL) ──────► SPEC-01, SPEC-13, SPEC-14 [DEFERRED]
 ```
 
 ## Success Criteria
@@ -89,6 +102,32 @@ SPEC-12 (Architecture) ───► All prior specs
 - SPEC-09.10-09.15: Cross-session promotion
 - SPEC-11.20-11.25: Learning from corrections
 - SPEC-12.10-12.16: REPL plugin system
+
+### Phase 3A: Rich Output (Active)
+- SPEC-13.01-13.05: Visual language system
+- SPEC-13.10-13.14: Rich Console integration
+- SPEC-13.20-13.25: Progress and budget display
+- SPEC-13.30-13.33: Depth visualization
+- SPEC-13.40-13.44: Error display
+- SPEC-13.50-13.52: Configuration
+
+### Phase 3B: Always-On Micro-RLM (Active)
+- SPEC-14.01-14.05: Micro execution mode
+- SPEC-14.10-14.15: Default activation
+- SPEC-14.20-14.25: Progressive escalation
+- SPEC-14.30-14.34: Definitely simple fast path
+- SPEC-14.40-14.44: Context externalization
+- SPEC-14.50-14.55: Memory system integration
+- SPEC-14.60-14.65: Cost management
+
+### Phase 3C: Lean REPL (Deferred)
+- SPEC-15.01-15.05: Lean REPL functions
+- SPEC-15.10-15.15: Process management
+- SPEC-15.20-15.24: JSON protocol
+- SPEC-15.30-15.34: Proof state visualization
+- SPEC-15.40-15.45: Auto-formalization
+- SPEC-15.50-15.54: RLM integration
+- SPEC-15.60-15.65: Installation and setup
 
 ## References
 
