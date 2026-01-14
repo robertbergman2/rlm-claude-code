@@ -557,6 +557,10 @@ class AutoActivator:
         if self.preferences.budget_dollars:
             plan.max_cost_dollars = self.preferences.budget_dollars
 
+        # Apply execution mode and tool access from preferences
+        plan.execution_mode = self.preferences.execution_mode
+        plan.tool_access = self.preferences.tool_access
+
         decision.plan = plan
         return plan
 

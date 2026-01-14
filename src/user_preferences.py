@@ -241,13 +241,14 @@ class PreferencesManager:
 
         mode_str = args[0]
         mode_map = {
+            "micro": ExecutionMode.MICRO,
             "fast": ExecutionMode.FAST,
             "balanced": ExecutionMode.BALANCED,
             "thorough": ExecutionMode.THOROUGH,
         }
 
         if mode_str not in mode_map:
-            return f"Unknown mode: {mode_str}. Use: fast, balanced, or thorough", {}
+            return f"Unknown mode: {mode_str}. Use: micro, fast, balanced, or thorough", {}
 
         old_mode = self.prefs.execution_mode
         self.prefs.execution_mode = mode_map[mode_str]

@@ -179,8 +179,11 @@ class TestPartitionProperties:
         chunks = partition_content_by_tokens(content, n)
         combined = "".join(chunks)
 
-        # Should have most of the original content
-        assert len(combined) >= len(content) * 0.8
+        # Should have most of the original non-whitespace content
+        # Note: whitespace-only chunks are filtered out by design
+        stripped_len = len(content.strip())
+        combined_stripped_len = len(combined.strip())
+        assert combined_stripped_len >= stripped_len * 0.8
 
     @given(content=reasonable_text)
     @settings(max_examples=30)
