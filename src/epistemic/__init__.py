@@ -25,6 +25,13 @@ from src.epistemic.claim_extractor import (
     ExtractionResult,
     extract_evidence_references,
 )
+from src.epistemic.consistency_checker import (
+    ConsistencyChecker,
+    ConsistencyConfig,
+    ConsistencyResult,
+    compute_consistency_score,
+    evidence_dependence_from_similarity,
+)
 from src.epistemic.evidence_auditor import (
     AuditResult,
     BatchAuditResult,
@@ -77,6 +84,12 @@ __all__ = [
     "SimilarityMethod",
     "cosine_similarity",
     "text_overlap_similarity",
+    # Consistency checking
+    "ConsistencyChecker",
+    "ConsistencyConfig",
+    "ConsistencyResult",
+    "compute_consistency_score",
+    "evidence_dependence_from_similarity",
     # Type aliases
     "GapType",
     "FlagReason",
