@@ -25,6 +25,12 @@ from src.epistemic.claim_extractor import (
     ExtractionResult,
     extract_evidence_references,
 )
+from src.epistemic.evidence_auditor import (
+    AuditResult,
+    BatchAuditResult,
+    EvidenceAuditor,
+    compute_evidence_support,
+)
 from src.epistemic.types import (
     ClaimVerification,
     EpistemicGap,
@@ -47,6 +53,11 @@ __all__ = [
     "ExtractedClaim",
     "ExtractionResult",
     "extract_evidence_references",
+    # Evidence auditing
+    "EvidenceAuditor",
+    "AuditResult",
+    "BatchAuditResult",
+    "compute_evidence_support",
     # Type aliases
     "GapType",
     "FlagReason",
