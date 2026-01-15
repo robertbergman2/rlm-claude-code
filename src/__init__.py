@@ -358,6 +358,18 @@ from .memory_backend import (
     create_backend,
 )
 
+# Epistemic verification (SPEC-16)
+from .epistemic import (
+    ClaimVerification,
+    EpistemicGap,
+    FlagReason,
+    GapType,
+    HallucinationReport,
+    OnFailureAction,
+    VerificationConfig,
+    VerificationMode,
+)
+
 # Trajectory and analysis
 from .trajectory import TrajectoryEvent, TrajectoryRenderer
 from .trajectory_analysis import StrategyType, TrajectoryAnalyzer
@@ -657,4 +669,13 @@ __all__ = [
     "NodeType",
     "SQLiteBackend",
     "create_backend",
+    # Epistemic verification (SPEC-16)
+    "ClaimVerification",
+    "EpistemicGap",
+    "FlagReason",
+    "GapType",
+    "HallucinationReport",
+    "OnFailureAction",
+    "VerificationConfig",
+    "VerificationMode",
 ]
