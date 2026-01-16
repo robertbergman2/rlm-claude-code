@@ -143,6 +143,8 @@ def extract_complexity_signals(prompt: str, context: SessionContext) -> TaskComp
         r"\b(how\s+does|how\s+do)\b.*\b(work|fit|connect|integrate|interact|communicate|call|use)\b",
         r"\b(design|structure)\s+(of|for)\s+(the|this)\b",
         r"\b(refactor|restructure|reorganize)\b",
+        r"\b(explain|describe|trace)\b.*\b(data\s*flow|flow|path|pipeline)\b",
+        r"\b(explain|describe|understand)\b.*\bhow\b.*\bworks?\b",
     ]
 
     # User intent: thorough mode signals

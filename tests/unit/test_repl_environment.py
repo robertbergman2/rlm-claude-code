@@ -1275,3 +1275,328 @@ report = detect_hallucinations(
 
         op4 = env._detect_hallucinations("R", "C", dependence_threshold=1.0)
         assert op4.metadata["dependence_threshold"] == 1.0
+
+
+# ============================================================================
+# RestrictedPython Integration Tests (Critical Path Validation)
+# ============================================================================
+
+
+class TestRestrictedPythonIntegration:
+    """
+    Integration tests that validate critical operations work WITH RestrictedPython.
+
+    These tests specifically exercise the _getitem_ and _write_ guards that were
+    added to fix production issues. All tests MUST use use_restricted=True.
+
+    See issue: REPL tests bypass RestrictedPython with use_restricted=False
+    """
+
+    @pytest.fixture
+    def context(self):
+        """Create a context for testing."""
+        return SessionContext(
+            messages=[
+                Message(role=MessageRole.USER, content="Test message"),
+                Message(role=MessageRole.ASSISTANT, content="Test response"),
+            ],
+            files={
+                "main.py": "def main(): return 42",
+                "utils.py": "def helper(): pass",
+                "config.json": '{"key": "value"}',
+            },
+            tool_outputs=[ToolOutput(tool_name="Read", content="file content")],
+            working_memory={"existing_key": "existing_value"},
+        )
+
+    @pytest.fixture
+    def restricted_env(self, context):
+        """Create a RestrictedPython-enabled environment."""
+        return RLMEnvironment(context, use_restricted=True)
+
+    # -------------------------------------------------------------------------
+    # Dictionary Subscript Access (_getitem_ guard)
+    # -------------------------------------------------------------------------
+
+    def test_files_dict_subscript_access(self, restricted_env):
+        """CRITICAL: Dictionary subscript access on files dict works."""
+        result = restricted_env.execute("content = files['main.py']")
+
+        assert result.success is True, f"Failed: {result.error}"
+        assert restricted_env.locals["content"] == "def main(): return 42"
+
+    def test_files_dict_get_method(self, restricted_env):
+        """Dictionary .get() method works in restricted mode."""
+        result = restricted_env.execute("content = files.get('nonexistent', 'default')")
+
+        assert result.success is True, f"Failed: {result.error}"
+        assert restricted_env.locals["content"] == "default"
+
+    def test_files_dict_keys_iteration(self, restricted_env):
+        """Can iterate over dictionary keys in restricted mode."""
+        result = restricted_env.execute("file_list = list(files.keys())")
+
+        assert result.success is True, f"Failed: {result.error}"
+        assert "main.py" in restricted_env.locals["file_list"]
+
+    def test_files_dict_values_iteration(self, restricted_env):
+        """Can iterate over dictionary values in restricted mode."""
+        result = restricted_env.execute("contents = list(files.values())")
+
+        assert result.success is True, f"Failed: {result.error}"
+        assert len(restricted_env.locals["contents"]) == 3
+
+    def test_files_dict_items_iteration(self, restricted_env):
+        """Can iterate over dictionary items in restricted mode."""
+        result = restricted_env.execute("items = list(files.items())")
+
+        assert result.success is True, f"Failed: {result.error}"
+        assert len(restricted_env.locals["items"]) == 3
+
+    def test_working_memory_subscript_read(self, restricted_env):
+        """Can read from working_memory via subscript."""
+        result = restricted_env.execute("val = working_memory['existing_key']")
+
+        assert result.success is True, f"Failed: {result.error}"
+        assert restricted_env.locals["val"] == "existing_value"
+
+    def test_list_subscript_access(self, restricted_env):
+        """List subscript access works in restricted mode."""
+        result = restricted_env.execute("first = conversation[0]")
+
+        assert result.success is True, f"Failed: {result.error}"
+        assert restricted_env.locals["first"]["role"] == "user"
+
+    def test_string_subscript_access(self, restricted_env):
+        """String subscript access works in restricted mode."""
+        result = restricted_env.execute("char = 'hello'[0]")
+
+        assert result.success is True, f"Failed: {result.error}"
+        assert restricted_env.locals["char"] == "h"
+
+    def test_nested_subscript_access(self, restricted_env):
+        """Nested subscript access works in restricted mode."""
+        result = restricted_env.execute("role = conversation[0]['role']")
+
+        assert result.success is True, f"Failed: {result.error}"
+        assert restricted_env.locals["role"] == "user"
+
+    # -------------------------------------------------------------------------
+    # Dictionary Write Access (_write_ guard)
+    # -------------------------------------------------------------------------
+
+    def test_working_memory_subscript_write(self, restricted_env):
+        """CRITICAL: Can write to working_memory via subscript."""
+        result = restricted_env.execute("working_memory['new_key'] = 'new_value'")
+
+        assert result.success is True, f"Failed: {result.error}"
+        assert restricted_env.globals["working_memory"]["new_key"] == "new_value"
+
+    def test_working_memory_multiple_writes(self, restricted_env):
+        """Can perform multiple writes to working_memory."""
+        result = restricted_env.execute("""
+working_memory['key1'] = 'value1'
+working_memory['key2'] = 'value2'
+working_memory['key3'] = [1, 2, 3]
+""")
+
+        assert result.success is True, f"Failed: {result.error}"
+        assert restricted_env.globals["working_memory"]["key1"] == "value1"
+        assert restricted_env.globals["working_memory"]["key2"] == "value2"
+        assert restricted_env.globals["working_memory"]["key3"] == [1, 2, 3]
+
+    def test_new_dict_creation_and_write(self, restricted_env):
+        """Can create new dict and write to it."""
+        result = restricted_env.execute("""
+d = {}
+d['key'] = 'value'
+result = d['key']
+""")
+
+        assert result.success is True, f"Failed: {result.error}"
+        assert restricted_env.locals["result"] == "value"
+
+    def test_list_item_assignment(self, restricted_env):
+        """Can assign to list items in restricted mode."""
+        result = restricted_env.execute("""
+lst = [1, 2, 3]
+lst[0] = 99
+result = lst[0]
+""")
+
+        assert result.success is True, f"Failed: {result.error}"
+        assert restricted_env.locals["result"] == 99
+
+    # -------------------------------------------------------------------------
+    # Helper Functions in Restricted Mode
+    # -------------------------------------------------------------------------
+
+    def test_peek_with_restricted_python(self, restricted_env):
+        """peek() helper works in restricted mode."""
+        result = restricted_env.execute("segment = peek(files['main.py'], 0, 10)")
+
+        assert result.success is True, f"Failed: {result.error}"
+        assert restricted_env.locals["segment"] == "def main()"
+
+    def test_search_with_restricted_python(self, restricted_env):
+        """search() helper works in restricted mode."""
+        result = restricted_env.execute("matches = search(files, 'def', regex=False)")
+
+        assert result.success is True, f"Failed: {result.error}"
+        assert len(restricted_env.locals["matches"]) >= 2
+
+    def test_search_on_dict_subscript_result(self, restricted_env):
+        """search() on result of dict subscript access."""
+        result = restricted_env.execute("matches = search(files['main.py'], 'return')")
+
+        assert result.success is True, f"Failed: {result.error}"
+        assert len(restricted_env.locals["matches"]) >= 1
+
+    def test_summarize_local_with_restricted_python(self, restricted_env):
+        """summarize_local() helper works in restricted mode."""
+        result = restricted_env.execute("summary = summarize_local(files)")
+
+        assert result.success is True, f"Failed: {result.error}"
+        # summarize_local returns dict repr for small dicts, or "N keys" for large ones
+        summary = restricted_env.locals["summary"]
+        assert "main.py" in summary or "3 keys" in summary
+
+    # -------------------------------------------------------------------------
+    # Complex Operations in Restricted Mode
+    # -------------------------------------------------------------------------
+
+    def test_list_comprehension_with_dict_access(self, restricted_env):
+        """List comprehension with dict subscript access."""
+        result = restricted_env.execute(
+            "sizes = [len(files[f]) for f in files.keys()]"
+        )
+
+        assert result.success is True, f"Failed: {result.error}"
+        assert len(restricted_env.locals["sizes"]) == 3
+
+    def test_dict_comprehension(self, restricted_env):
+        """Dict comprehension works in restricted mode."""
+        result = restricted_env.execute(
+            "lengths = {k: len(v) for k, v in files.items()}"
+        )
+
+        assert result.success is True, f"Failed: {result.error}"
+        assert "main.py" in restricted_env.locals["lengths"]
+
+    def test_filter_and_map_on_dict(self, restricted_env):
+        """filter/map operations on dict in restricted mode."""
+        result = restricted_env.execute("""
+py_files = [k for k in files.keys() if k.endswith('.py')]
+""")
+
+        assert result.success is True, f"Failed: {result.error}"
+        assert "main.py" in restricted_env.locals["py_files"]
+        assert "config.json" not in restricted_env.locals["py_files"]
+
+    def test_enumerate_over_dict_keys(self, restricted_env):
+        """enumerate() over dict keys works."""
+        result = restricted_env.execute("""
+indexed = [(i, k) for i, k in enumerate(files.keys())]
+""")
+
+        assert result.success is True, f"Failed: {result.error}"
+        assert len(restricted_env.locals["indexed"]) == 3
+
+    def test_combined_read_transform_write(self, restricted_env):
+        """Combined read, transform, and write operation."""
+        result = restricted_env.execute("""
+content = files['main.py']
+lines = content.split('\\n')
+working_memory['line_count'] = len(lines)
+""")
+
+        assert result.success is True, f"Failed: {result.error}"
+        assert restricted_env.globals["working_memory"]["line_count"] == 1
+
+    # -------------------------------------------------------------------------
+    # Edge Cases
+    # -------------------------------------------------------------------------
+
+    def test_subscript_with_variable_key(self, restricted_env):
+        """Subscript access with variable as key."""
+        result = restricted_env.execute("""
+key = 'main.py'
+content = files[key]
+""")
+
+        assert result.success is True, f"Failed: {result.error}"
+        assert "def main" in restricted_env.locals["content"]
+
+    def test_subscript_with_expression_key(self, restricted_env):
+        """Subscript access with expression as key."""
+        result = restricted_env.execute("""
+prefix = 'main'
+content = files[prefix + '.py']
+""")
+
+        assert result.success is True, f"Failed: {result.error}"
+        assert "def main" in restricted_env.locals["content"]
+
+    def test_negative_list_index(self, restricted_env):
+        """Negative list index works in restricted mode."""
+        result = restricted_env.execute("last = conversation[-1]")
+
+        assert result.success is True, f"Failed: {result.error}"
+        assert restricted_env.locals["last"]["role"] == "assistant"
+
+    def test_slice_access(self, restricted_env):
+        """Slice access on lists works in restricted mode."""
+        result = restricted_env.execute("all_msgs = conversation[:]")
+
+        assert result.success is True, f"Failed: {result.error}"
+        assert len(restricted_env.locals["all_msgs"]) == 2
+
+
+@pytest.mark.parametrize("use_restricted", [True, False])
+class TestREPLHelpersBothModes:
+    """
+    Parametrized tests that verify helper functions work in BOTH modes.
+
+    This ensures we don't have regressions where something works in
+    unrestricted mode but fails in restricted mode.
+    """
+
+    @pytest.fixture
+    def context(self):
+        """Create a context for testing."""
+        return SessionContext(
+            messages=[Message(role=MessageRole.USER, content="Test")],
+            files={"test.py": "print('hello')"},
+            tool_outputs=[],
+            working_memory={},
+        )
+
+    @pytest.fixture
+    def env(self, context, use_restricted):
+        """Create environment with parametrized restriction mode."""
+        return RLMEnvironment(context, use_restricted=use_restricted)
+
+    def test_dict_subscript_both_modes(self, env, use_restricted):
+        """Dict subscript works in both modes."""
+        result = env.execute("content = files['test.py']")
+        assert result.success is True, f"Failed in restricted={use_restricted}: {result.error}"
+
+    def test_working_memory_write_both_modes(self, env, use_restricted):
+        """Working memory write works in both modes."""
+        result = env.execute("working_memory['key'] = 'value'")
+        assert result.success is True, f"Failed in restricted={use_restricted}: {result.error}"
+
+    def test_peek_both_modes(self, env, use_restricted):
+        """peek() works in both modes."""
+        result = env.execute("segment = peek(files['test.py'], 0, 5)")
+        assert result.success is True, f"Failed in restricted={use_restricted}: {result.error}"
+
+    def test_search_both_modes(self, env, use_restricted):
+        """search() works in both modes."""
+        result = env.execute("matches = search(files, 'print')")
+        assert result.success is True, f"Failed in restricted={use_restricted}: {result.error}"
+
+    def test_list_comprehension_both_modes(self, env, use_restricted):
+        """List comprehension with dict access works in both modes."""
+        result = env.execute("keys = [k for k in files.keys()]")
+        assert result.success is True, f"Failed in restricted={use_restricted}: {result.error}"
