@@ -1948,3 +1948,162 @@ class TestEpistemicEdgeLabels:
 
         assert len(cites_edges) == 1
         assert len(verifies_edges) == 1
+
+
+class TestAddClaimMethod:
+    """Tests for add_claim() convenience method (SPEC-16.15)."""
+
+    def test_add_claim_basic(self, reasoning_traces):
+        """Can add a basic claim to a decision."""
+        goal_id = reasoning_traces.create_goal(content="Test goal")
+        decision_id = reasoning_traces.create_decision(
+            goal_id=goal_id,
+            content="Decide on approach",
+            prompt="How should we proceed?",
+        )
+
+        claim_id = reasoning_traces.add_claim(
+            decision_id=decision_id,
+            claim="The function returns 42",
+        )
+
+        assert claim_id is not None
+        node = reasoning_traces.get_decision_node(claim_id)
+        assert node.decision_type == "claim"
+        assert node.claim_text == "The function returns 42"
+        assert node.parent_id == decision_id
+
+    def test_add_claim_with_evidence(self, reasoning_traces):
+        """add_claim creates cites edges to evidence sources."""
+        goal_id = reasoning_traces.create_goal(content="Test goal")
+        decision_id = reasoning_traces.create_decision(
+            goal_id=goal_id,
+            content="Analyze results",
+            prompt="What are the results?",
+        )
+        obs1_id = reasoning_traces.create_observation(content="Test returned 42")
+        obs2_id = reasoning_traces.create_observation(content="Log shows success")
+
+        claim_id = reasoning_traces.add_claim(
+            decision_id=decision_id,
+            claim="The function works correctly",
+            evidence_ids=[obs1_id, obs2_id],
+        )
+
+        # Check claim was created with evidence_ids stored
+        node = reasoning_traces.get_decision_node(claim_id)
+        assert node.evidence_ids == [obs1_id, obs2_id]
+
+        # Check cites edges were created
+        claim_edges = reasoning_traces.store.get_edges_for_node(claim_id)
+        cites_edges = [e for e in claim_edges if e.label == "cites"]
+        assert len(cites_edges) == 2
+
+    def test_add_claim_with_confidence(self, reasoning_traces):
+        """Can set confidence when adding a claim."""
+        goal_id = reasoning_traces.create_goal(content="Test goal")
+        decision_id = reasoning_traces.create_decision(
+            goal_id=goal_id,
+            content="High confidence decision",
+            prompt="What do we know for sure?",
+        )
+
+        claim_id = reasoning_traces.add_claim(
+            decision_id=decision_id,
+            claim="This is definitely true",
+            confidence=0.95,
+        )
+
+        node = reasoning_traces.get_decision_node(claim_id)
+        assert node.confidence == 0.95
+
+    def test_add_claim_no_evidence(self, reasoning_traces):
+        """add_claim works without evidence (no cites edges created)."""
+        goal_id = reasoning_traces.create_goal(content="Test goal")
+        decision_id = reasoning_traces.create_decision(
+            goal_id=goal_id,
+            content="Unsupported claim",
+            prompt="What do we think?",
+        )
+
+        claim_id = reasoning_traces.add_claim(
+            decision_id=decision_id,
+            claim="This might be true",
+        )
+
+        node = reasoning_traces.get_decision_node(claim_id)
+        assert node.evidence_ids == []
+
+        # No cites edges
+        claim_edges = reasoning_traces.store.get_edges_for_node(claim_id)
+        cites_edges = [e for e in claim_edges if e.label == "cites"]
+        assert len(cites_edges) == 0
+
+    def test_add_claim_empty_evidence_list(self, reasoning_traces):
+        """add_claim with empty evidence list creates no edges."""
+        goal_id = reasoning_traces.create_goal(content="Test goal")
+        decision_id = reasoning_traces.create_decision(
+            goal_id=goal_id,
+            content="Test decision",
+            prompt="Test?",
+        )
+
+        claim_id = reasoning_traces.add_claim(
+            decision_id=decision_id,
+            claim="Test claim",
+            evidence_ids=[],
+        )
+
+        claim_edges = reasoning_traces.store.get_edges_for_node(claim_id)
+        cites_edges = [e for e in claim_edges if e.label == "cites"]
+        assert len(cites_edges) == 0
+
+    def test_add_claim_sets_pending_status(self, reasoning_traces):
+        """add_claim creates claims with pending verification status."""
+        goal_id = reasoning_traces.create_goal(content="Test goal")
+        decision_id = reasoning_traces.create_decision(
+            goal_id=goal_id,
+            content="New decision",
+            prompt="What's new?",
+        )
+
+        claim_id = reasoning_traces.add_claim(
+            decision_id=decision_id,
+            claim="Needs verification",
+        )
+
+        node = reasoning_traces.get_decision_node(claim_id)
+        assert node.verification_status == "pending"
+
+    def test_add_multiple_claims_to_decision(self, reasoning_traces):
+        """Can add multiple claims to the same decision."""
+        goal_id = reasoning_traces.create_goal(content="Test goal")
+        decision_id = reasoning_traces.create_decision(
+            goal_id=goal_id,
+            content="Complex decision",
+            prompt="Multiple aspects?",
+        )
+
+        claim1_id = reasoning_traces.add_claim(
+            decision_id=decision_id,
+            claim="First claim",
+        )
+        claim2_id = reasoning_traces.add_claim(
+            decision_id=decision_id,
+            claim="Second claim",
+        )
+        claim3_id = reasoning_traces.add_claim(
+            decision_id=decision_id,
+            claim="Third claim",
+        )
+
+        node1 = reasoning_traces.get_decision_node(claim1_id)
+        node2 = reasoning_traces.get_decision_node(claim2_id)
+        node3 = reasoning_traces.get_decision_node(claim3_id)
+
+        assert node1.parent_id == decision_id
+        assert node2.parent_id == decision_id
+        assert node3.parent_id == decision_id
+        assert node1.claim_text == "First claim"
+        assert node2.claim_text == "Second claim"
+        assert node3.claim_text == "Third claim"

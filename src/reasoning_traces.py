@@ -547,6 +547,46 @@ class ReasoningTraces:
             ],
         )
 
+    def add_claim(
+        self,
+        decision_id: str,
+        claim: str,
+        evidence_ids: list[str] | None = None,
+        confidence: float = 0.5,
+    ) -> str:
+        """
+        Add a claim to a decision with evidence links.
+
+        Implements: Spec SPEC-16.15
+
+        This is a convenience method that:
+        1. Creates a claim node with the decision as parent
+        2. Links the claim to all provided evidence sources via "cites" edges
+
+        Args:
+            decision_id: The parent decision node ID
+            claim: The claim text being made
+            evidence_ids: List of evidence source node IDs (facts, observations, etc.)
+            confidence: Initial confidence score for the claim (0.0-1.0)
+
+        Returns:
+            The claim node ID
+        """
+        # Create the claim with decision as parent
+        claim_id = self.create_claim(
+            claim_text=claim,
+            evidence_ids=evidence_ids,
+            confidence=confidence,
+            parent_id=decision_id,
+        )
+
+        # Create "cites" edges to each evidence source
+        if evidence_ids:
+            for evidence_id in evidence_ids:
+                self.link_claim_to_evidence(claim_id, evidence_id)
+
+        return claim_id
+
     def create_verification(
         self,
         claim_id: str,
