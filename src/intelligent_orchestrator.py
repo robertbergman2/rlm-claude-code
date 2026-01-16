@@ -811,6 +811,8 @@ Output your decision as a JSON object."""
             r"\bensure\s+(consistent|all)\b",
             r"\bimpact\s+of\s+(changing|modifying)\b",
             r"\bacross\s+(modules?|files?|services?|components?)\b",
+            # Code changes to modules/components need multi-file impact analysis
+            r"\b(add|implement|create|introduce)\s+\w+.*\b(to|for|in)\s+(the\s+)?\w*\s*(module|service|component|class|package)\b",
         ]
         if any(re.search(p, query_lower) for p in synthesis_patterns):
             high_value_signals.append("synthesis_required")
@@ -980,6 +982,10 @@ Output your decision as a JSON object."""
             mode = ExecutionMode.FAST
         elif classification.complexity > 0.7 or len(high_value_signals) >= 2:
             mode = ExecutionMode.THOROUGH
+        elif "synthesis_required" in high_value_signals:
+            # Code changes needing synthesis (multi-file impact) require BALANCED mode
+            mode = ExecutionMode.BALANCED
+            heuristics_triggered.append("mode_override:synthesis_balanced")
         elif classification.complexity < 0.3 and len(high_value_signals) <= 1:
             mode = ExecutionMode.FAST
         else:

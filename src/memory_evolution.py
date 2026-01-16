@@ -341,6 +341,66 @@ class MemoryEvolution:
             crystallized_count=crystallized_count,
         )
 
+    def promote_node(
+        self,
+        node_id: str,
+        target_tier: str | None = None,
+    ) -> bool:
+        """
+        Promote a specific node to a higher tier.
+
+        Implements: Spec SPEC-03.08
+
+        Args:
+            node_id: ID of the node to promote
+            target_tier: Target tier ('session', 'longterm'). If None, promotes
+                        to the next tier (task→session, session→longterm)
+
+        Returns:
+            True if promoted successfully, False if node not found or invalid tier
+        """
+        # Get the node
+        node = self.store.get_node(node_id)
+        if node is None:
+            return False
+
+        # Determine target tier
+        tier_progression = {
+            "task": "session",
+            "session": "longterm",
+        }
+
+        if target_tier is None:
+            target_tier = tier_progression.get(node.tier)
+            if target_tier is None:
+                return False  # Can't promote from longterm or archive
+
+        # Validate target tier is a valid promotion
+        valid_promotions = {
+            "task": ["session", "longterm"],
+            "session": ["longterm"],
+        }
+
+        if node.tier not in valid_promotions:
+            return False  # Can't promote from longterm or archive
+
+        if target_tier not in valid_promotions.get(node.tier, []):
+            return False  # Invalid target tier for current tier
+
+        # Perform the promotion
+        result = self.store.update_node(node_id, tier=target_tier)
+
+        if result:
+            self.store.log_evolution(
+                operation="promote",
+                node_ids=[node_id],
+                from_tier=node.tier,
+                to_tier=target_tier,
+                reasoning=f"Single node promotion via promote_node()",
+            )
+
+        return result
+
     def _find_connected_subgraphs(self, nodes: list[Node]) -> list[list[Node]]:
         """Find groups of connected nodes."""
         if not nodes:

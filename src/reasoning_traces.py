@@ -343,32 +343,39 @@ class ReasoningTraces:
         goal_id: str,
         content: str,
         prompt: str | None = None,
+        parent_id: str | None = None,
     ) -> str:
         """
-        Create a decision node under a goal.
+        Create a decision node under a goal or another decision.
 
         Implements: Spec SPEC-04.04
 
         Args:
-            goal_id: Parent goal ID
+            goal_id: Goal ID to associate with (for edge creation)
             content: Decision description
+            prompt: Optional prompt that triggered this decision
+            parent_id: Optional parent decision ID for sub-decisions.
+                       If None, uses goal_id as parent (backward compatible).
 
         Returns:
             Node ID
         """
+        # Use goal_id as parent if parent_id not specified (backward compatible)
+        actual_parent_id = parent_id if parent_id is not None else goal_id
+
         decision_id = self._create_decision_node(
             decision_type="decision",
             content=content,
             prompt=prompt,
-            parent_id=goal_id,
+            parent_id=actual_parent_id,
         )
 
-        # Create "spawns" edge from goal to decision
+        # Create "spawns" edge from parent to decision
         self.store.create_edge(
             edge_type="relation",
             label="spawns",
             members=[
-                {"node_id": goal_id, "role": "subject", "position": 0},
+                {"node_id": actual_parent_id, "role": "subject", "position": 0},
                 {"node_id": decision_id, "role": "object", "position": 1},
             ],
         )

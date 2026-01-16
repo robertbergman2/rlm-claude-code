@@ -176,6 +176,10 @@ class TrajectoryEventType(Enum):
     BUDGET_ALERT = "budget_alert"
     VERIFICATION = "verification"  # SPEC-16.22: Epistemic verification checkpoint
 
+    # Convenience aliases for common usage patterns
+    REPL = "repl_exec"  # Alias for REPL_EXEC (start of REPL operation)
+    RECURSE = "recurse_start"  # Alias for RECURSE_START (start of recursive call)
+
 
 @dataclass
 class TrajectoryEvent:

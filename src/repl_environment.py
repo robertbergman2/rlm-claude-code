@@ -157,6 +157,7 @@ class RLMEnvironment:
             "_iter_unpack_sequence_": guarded_iter_unpack_sequence,
             "_getattr_": safer_getattr,
             # Context variables
+            "context": context,  # Full SessionContext object
             "conversation": [
                 {"role": m.role.value, "content": m.content} for m in context.messages
             ],

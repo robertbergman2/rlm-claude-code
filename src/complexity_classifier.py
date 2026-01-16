@@ -140,7 +140,7 @@ def extract_complexity_signals(prompt: str, context: SessionContext) -> TaskComp
         r"\b(architecture|architect)\b",
         r"\b(system|overall|high.?level)\s+(design|structure|overview)\b",
         r"\b(summarize|explain|understand)\b.*\b(codebase|project|system|architecture)\b",
-        r"\b(how\s+does|how\s+do)\b.*\b(work|fit|connect|integrate)\b",
+        r"\b(how\s+does|how\s+do)\b.*\b(work|fit|connect|integrate|interact|communicate|call|use)\b",
         r"\b(design|structure)\s+(of|for)\s+(the|this)\b",
         r"\b(refactor|restructure|reorganize)\b",
     ]
