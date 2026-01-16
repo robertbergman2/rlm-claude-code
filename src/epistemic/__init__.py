@@ -58,6 +58,13 @@ from src.epistemic.types import (
     VerificationConfig,
     VerificationMode,
 )
+from src.epistemic.verification_feedback import (
+    FeedbackStatistics,
+    FeedbackStore,
+    FeedbackType,
+    VerificationFeedback,
+    record_feedback,
+)
 
 __all__ = [
     # Core types
@@ -95,4 +102,10 @@ __all__ = [
     "FlagReason",
     "OnFailureAction",
     "VerificationMode",
+    # User feedback (SPEC-16.37)
+    "FeedbackType",
+    "VerificationFeedback",
+    "FeedbackStatistics",
+    "FeedbackStore",
+    "record_feedback",
 ]
