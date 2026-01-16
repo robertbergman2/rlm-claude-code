@@ -352,7 +352,7 @@ cd rlm-claude-code
 # Install all dependencies
 uv sync --all-extras
 
-# Run tests (1000+ tests)
+# Run tests (3000+ tests)
 uv run pytest tests/ -v
 
 # Type check

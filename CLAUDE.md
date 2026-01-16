@@ -11,7 +11,7 @@ uv sync --all-extras
 # Type check
 uv run ty check src/
 
-# Test (1000+ tests)
+# Test (3000+ tests)
 uv run pytest tests/ -v
 
 # Install as plugin
@@ -227,7 +227,7 @@ SPEC implementations:
 - Property tests for data transformations
 - Security tests for REPL operations
 - Integration tests for component interactions
-- 1000+ tests total
+- 3000+ tests total
 
 ## Before Committing
 
