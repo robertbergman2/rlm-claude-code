@@ -32,7 +32,7 @@ uv sync --all-extras
 ### Verify Installation
 
 ```bash
-# Run tests (should see 1000+ pass)
+# Run tests (should see 3000+ pass)
 uv run pytest tests/ -v --tb=short
 
 # Type check
