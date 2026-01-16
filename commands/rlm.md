@@ -37,3 +37,9 @@ Force RLM off when:
 | normal | All events, truncated content |
 | verbose | All events, full content |
 | debug | Everything + internal state |
+
+## Related Commands
+
+- `/rlm-orchestrator` — Launch RLM orchestrator agent for complex context tasks
+- `/simple` — Bypass RLM for a single operation
+- `/trajectory <file>` — Analyze a saved trajectory

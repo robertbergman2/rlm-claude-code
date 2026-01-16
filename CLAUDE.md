@@ -243,6 +243,7 @@ SPEC implementations:
 | `/rlm` | Toggle/configure RLM mode |
 | `/rlm status` | Show configuration |
 | `/rlm mode <fast\|balanced\|thorough>` | Set mode |
+| `/rlm-orchestrator` | Launch RLM agent for complex context tasks |
 | `/simple` | Bypass RLM once |
 | `/trajectory <file>` | Analyze trajectory |
 | `/test` | Run tests |
