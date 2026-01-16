@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
-    from .epistemic.types import ClaimVerification
+    from .epistemic.types import ClaimVerification, HallucinationReport
     from .memory_store import MemoryStore
     from .trajectory import TrajectoryEvent
 
@@ -892,6 +892,84 @@ class ReasoningTraces:
                     )
 
         return gaps
+
+    def get_verification_report(self, goal_id: str) -> "HallucinationReport":
+        """
+        Generate a full verification report for a goal tree.
+
+        Implements: Spec SPEC-16.18
+
+        Aggregates all claims under the goal, their verification status,
+        and epistemic gaps into a comprehensive HallucinationReport.
+
+        Args:
+            goal_id: Root goal ID to generate report for
+
+        Returns:
+            HallucinationReport with all claims, gaps, and metrics
+
+        Raises:
+            ValueError: If goal_id doesn't exist
+        """
+        from .epistemic import ClaimVerification, HallucinationReport
+
+        # Verify goal exists
+        goal = self.get_decision_node(goal_id)
+        if goal is None:
+            raise ValueError(f"Goal not found: {goal_id}")
+
+        # Create report with goal_id as response_id
+        report = HallucinationReport(response_id=goal_id)
+
+        # Collect all claims
+        claims = self._collect_claims_under_goal(goal_id)
+
+        # Build ClaimVerification for each claim
+        for claim in claims:
+            verification = self._get_verification_for_claim(claim.id)
+
+            # Build ClaimVerification from claim and verification data
+            claim_verification = ClaimVerification(
+                claim_id=claim.id,
+                claim_text=claim.claim_text or claim.content,
+                evidence_ids=claim.evidence_ids or [],
+                evidence_support=verification.support_score if verification else 0.5,
+                evidence_dependence=verification.dependence_score if verification else 0.5,
+                consistency_score=verification.consistency_score if verification else 1.0,
+                is_flagged=verification.is_flagged if verification else False,
+                flag_reason=verification.flag_reason if verification else None,
+            )
+
+            # Calculate evidence gap bits
+            if verification and verification.support_score is not None:
+                # Higher gap bits for lower support
+                claim_verification.evidence_gap_bits = max(
+                    0.0, 2.0 * (1.0 - verification.support_score)
+                )
+
+            report.add_claim(claim_verification)
+
+        # Get and add epistemic gaps
+        gaps = self.get_epistemic_gaps(goal_id)
+        for gap in gaps:
+            report.add_gap(gap)
+
+        # Determine if retry should be recommended
+        if report.has_critical_gaps or report.verification_rate < 0.5:
+            report.should_retry = True
+            if report.has_critical_gaps:
+                critical_types = [g.gap_type for g in gaps if g.severity == "critical"]
+                report.retry_guidance = (
+                    f"Critical issues found: {', '.join(set(critical_types))}. "
+                    "Please verify claims against actual evidence."
+                )
+            else:
+                report.retry_guidance = (
+                    f"Low verification rate ({report.verification_rate:.0%}). "
+                    "Consider providing more evidence or qualifying claims."
+                )
+
+        return report
 
     def _collect_claims_under_goal(self, goal_id: str) -> list[DecisionNode]:
         """

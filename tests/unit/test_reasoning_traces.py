@@ -2653,3 +2653,295 @@ class TestGetEpistemicGaps:
         assert len(gaps) == 1
         assert gaps[0].suggested_action != ""
         assert "evidence" in gaps[0].suggested_action.lower()
+
+
+# =============================================================================
+# SPEC-16.18: get_verification_report()
+# =============================================================================
+
+
+class TestGetVerificationReport:
+    """
+    Tests for get_verification_report() method.
+
+    @trace SPEC-16.18
+    """
+
+    def _make_mock_verification_model(
+        self,
+        evidence_support: float = 0.8,
+        evidence_dependence: float = 0.7,
+        consistency_score: float = 0.9,
+        is_flagged: bool = False,
+        flag_reason: str | None = None,
+    ):
+        """Create a mock verification model."""
+        from src.epistemic import ClaimVerification
+
+        def mock_model(claim_text: str, evidence: list) -> ClaimVerification:
+            return ClaimVerification(
+                claim_id="mock",
+                claim_text=claim_text,
+                evidence_support=evidence_support,
+                evidence_dependence=evidence_dependence,
+                consistency_score=consistency_score,
+                is_flagged=is_flagged,
+                flag_reason=flag_reason,
+            )
+
+        return mock_model
+
+    def test_get_verification_report_exists(self, reasoning_traces):
+        """
+        get_verification_report method should exist.
+
+        @trace SPEC-16.18
+        """
+        assert hasattr(reasoning_traces, "get_verification_report")
+        assert callable(reasoning_traces.get_verification_report)
+
+    def test_get_verification_report_raises_for_nonexistent_goal(self, reasoning_traces):
+        """
+        get_verification_report raises ValueError for nonexistent goal.
+
+        @trace SPEC-16.18
+        """
+        with pytest.raises(ValueError, match="Goal not found"):
+            reasoning_traces.get_verification_report("nonexistent-goal")
+
+    def test_get_verification_report_returns_hallucination_report(self, reasoning_traces):
+        """
+        get_verification_report returns a HallucinationReport.
+
+        @trace SPEC-16.18
+        """
+        from src.epistemic import HallucinationReport
+
+        goal_id = reasoning_traces.create_goal(content="Test goal")
+        report = reasoning_traces.get_verification_report(goal_id)
+
+        assert isinstance(report, HallucinationReport)
+        assert report.response_id == goal_id
+
+    def test_get_verification_report_empty_for_no_claims(self, reasoning_traces):
+        """
+        get_verification_report returns empty report when no claims exist.
+
+        @trace SPEC-16.18
+        """
+        goal_id = reasoning_traces.create_goal(content="Test goal")
+        report = reasoning_traces.get_verification_report(goal_id)
+
+        assert report.total_claims == 0
+        assert report.verified_claims == 0
+        assert report.flagged_claims == 0
+        assert len(report.claims) == 0
+        assert len(report.gaps) == 0
+
+    def test_get_verification_report_includes_all_claims(self, reasoning_traces):
+        """
+        get_verification_report includes all claims in the tree.
+
+        @trace SPEC-16.18
+        """
+        goal_id = reasoning_traces.create_goal(content="Test goal")
+        decision_id = reasoning_traces.create_decision(
+            goal_id=goal_id, content="Test decision"
+        )
+
+        # Create multiple claims
+        claim1_id = reasoning_traces.create_claim(
+            parent_id=decision_id, claim_text="First claim"
+        )
+        claim2_id = reasoning_traces.create_claim(
+            parent_id=decision_id, claim_text="Second claim"
+        )
+        claim3_id = reasoning_traces.create_claim(
+            parent_id=decision_id, claim_text="Third claim"
+        )
+
+        report = reasoning_traces.get_verification_report(goal_id)
+
+        assert report.total_claims == 3
+        claim_ids = {c.claim_id for c in report.claims}
+        assert claim1_id in claim_ids
+        assert claim2_id in claim_ids
+        assert claim3_id in claim_ids
+
+    def test_get_verification_report_aggregates_verification_status(self, reasoning_traces):
+        """
+        get_verification_report aggregates verified/flagged counts.
+
+        @trace SPEC-16.18
+        """
+        goal_id = reasoning_traces.create_goal(content="Test goal")
+        decision_id = reasoning_traces.create_decision(
+            goal_id=goal_id, content="Test decision"
+        )
+
+        # Create claims with different verification results
+        claim1_id = reasoning_traces.create_claim(
+            parent_id=decision_id, claim_text="Verified claim"
+        )
+        claim2_id = reasoning_traces.create_claim(
+            parent_id=decision_id, claim_text="Flagged claim"
+        )
+
+        # Verify with different results
+        good_model = self._make_mock_verification_model(evidence_support=0.9)
+        bad_model = self._make_mock_verification_model(
+            evidence_support=0.1, is_flagged=True, flag_reason="unsupported"
+        )
+
+        reasoning_traces.verify_claim(claim1_id, good_model)
+        reasoning_traces.verify_claim(claim2_id, bad_model)
+
+        report = reasoning_traces.get_verification_report(goal_id)
+
+        assert report.total_claims == 2
+        assert report.verified_claims == 1
+        assert report.flagged_claims == 1
+        assert report.verification_rate == 0.5
+
+    def test_get_verification_report_includes_epistemic_gaps(self, reasoning_traces):
+        """
+        get_verification_report includes epistemic gaps.
+
+        @trace SPEC-16.18
+        """
+        goal_id = reasoning_traces.create_goal(content="Test goal")
+        decision_id = reasoning_traces.create_decision(
+            goal_id=goal_id, content="Test decision"
+        )
+        claim_id = reasoning_traces.create_claim(
+            parent_id=decision_id, claim_text="Problematic claim"
+        )
+
+        # Verify with flagged result
+        mock_model = self._make_mock_verification_model(
+            evidence_support=0.1, is_flagged=True, flag_reason="phantom_citation"
+        )
+        reasoning_traces.verify_claim(claim_id, mock_model)
+
+        report = reasoning_traces.get_verification_report(goal_id)
+
+        assert len(report.gaps) == 1
+        assert report.gaps[0].claim_id == claim_id
+        assert report.gaps[0].gap_type == "phantom_citation"
+
+    def test_get_verification_report_computes_overall_confidence(self, reasoning_traces):
+        """
+        get_verification_report computes overall confidence from claims.
+
+        @trace SPEC-16.18
+        """
+        goal_id = reasoning_traces.create_goal(content="Test goal")
+        decision_id = reasoning_traces.create_decision(
+            goal_id=goal_id, content="Test decision"
+        )
+
+        # Create claims with different support levels
+        claim1_id = reasoning_traces.create_claim(
+            parent_id=decision_id, claim_text="High confidence claim"
+        )
+        claim2_id = reasoning_traces.create_claim(
+            parent_id=decision_id, claim_text="Low confidence claim"
+        )
+
+        high_model = self._make_mock_verification_model(evidence_support=0.9)
+        low_model = self._make_mock_verification_model(evidence_support=0.3)
+
+        reasoning_traces.verify_claim(claim1_id, high_model)
+        reasoning_traces.verify_claim(claim2_id, low_model)
+
+        report = reasoning_traces.get_verification_report(goal_id)
+
+        # Overall confidence should be average of combined scores
+        assert 0.0 < report.overall_confidence < 1.0
+
+    def test_get_verification_report_sets_should_retry_for_critical_gaps(
+        self, reasoning_traces
+    ):
+        """
+        get_verification_report sets should_retry when critical gaps exist.
+
+        @trace SPEC-16.18
+        """
+        goal_id = reasoning_traces.create_goal(content="Test goal")
+        decision_id = reasoning_traces.create_decision(
+            goal_id=goal_id, content="Test decision"
+        )
+        claim_id = reasoning_traces.create_claim(
+            parent_id=decision_id, claim_text="Bad claim"
+        )
+
+        # Create critical gap (phantom_citation is critical)
+        mock_model = self._make_mock_verification_model(
+            evidence_support=0.0, is_flagged=True, flag_reason="phantom_citation"
+        )
+        reasoning_traces.verify_claim(claim_id, mock_model)
+
+        report = reasoning_traces.get_verification_report(goal_id)
+
+        assert report.has_critical_gaps is True
+        assert report.should_retry is True
+        assert report.retry_guidance is not None
+        assert "phantom_citation" in report.retry_guidance
+
+    def test_get_verification_report_sets_should_retry_for_low_verification_rate(
+        self, reasoning_traces
+    ):
+        """
+        get_verification_report sets should_retry when verification rate is low.
+
+        @trace SPEC-16.18
+        """
+        goal_id = reasoning_traces.create_goal(content="Test goal")
+        decision_id = reasoning_traces.create_decision(
+            goal_id=goal_id, content="Test decision"
+        )
+
+        # Create multiple claims, most with low support (not flagged but low rate)
+        for i in range(4):
+            claim_id = reasoning_traces.create_claim(
+                parent_id=decision_id, claim_text=f"Claim {i}"
+            )
+            # 3 out of 4 will have low support
+            if i < 3:
+                model = self._make_mock_verification_model(
+                    evidence_support=0.4, is_flagged=True, flag_reason="unsupported"
+                )
+            else:
+                model = self._make_mock_verification_model(evidence_support=0.9)
+            reasoning_traces.verify_claim(claim_id, model)
+
+        report = reasoning_traces.get_verification_report(goal_id)
+
+        # 1/4 verified = 25% rate, should trigger retry
+        assert report.verification_rate < 0.5
+        assert report.should_retry is True
+
+    def test_get_verification_report_no_retry_for_good_report(self, reasoning_traces):
+        """
+        get_verification_report does not set should_retry when all is well.
+
+        @trace SPEC-16.18
+        """
+        goal_id = reasoning_traces.create_goal(content="Test goal")
+        decision_id = reasoning_traces.create_decision(
+            goal_id=goal_id, content="Test decision"
+        )
+
+        # Create claims with good verification
+        for i in range(3):
+            claim_id = reasoning_traces.create_claim(
+                parent_id=decision_id, claim_text=f"Good claim {i}"
+            )
+            model = self._make_mock_verification_model(evidence_support=0.9)
+            reasoning_traces.verify_claim(claim_id, model)
+
+        report = reasoning_traces.get_verification_report(goal_id)
+
+        assert report.verification_rate == 1.0
+        assert report.has_critical_gaps is False
+        assert report.should_retry is False
