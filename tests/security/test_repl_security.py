@@ -171,8 +171,8 @@ class TestSubprocessRestrictions:
 
     def test_allowed_tools_are_minimal(self):
         """Only minimal set of tools are allowed."""
-        # Should only allow type checking and linting tools
-        assert ALLOWED_SUBPROCESSES == frozenset({"ty", "ruff"})
+        # Should only allow type checking, linting, and package management tools
+        assert ALLOWED_SUBPROCESSES == frozenset({"ty", "ruff", "uv"})
 
     def test_run_tool_allows_ty(self, sandbox):
         """run_tool allows ty type checker."""

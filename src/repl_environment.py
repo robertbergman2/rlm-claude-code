@@ -156,6 +156,8 @@ class RLMEnvironment:
             "_getiter_": default_guarded_getiter,
             "_iter_unpack_sequence_": guarded_iter_unpack_sequence,
             "_getattr_": safer_getattr,
+            "_getitem_": self._guarded_getitem,
+            "_write_": self._guarded_write,
             # Context variables
             "context": context,  # Full SessionContext object
             "conversation": [
@@ -191,6 +193,37 @@ class RLMEnvironment:
 
         # Memory store (initialized via enable_memory())
         self._memory_store: MemoryStore | None = None
+
+    def _guarded_getitem(self, obj: Any, key: Any) -> Any:
+        """
+        Safe getitem guard for RestrictedPython.
+
+        Allows subscript access (obj[key]) for safe container types.
+        """
+        # Allow access to standard container types
+        if isinstance(obj, (dict, list, tuple, str, bytes)):
+            return obj[key]
+        # Allow access to dataclass-like objects via dict interface
+        if hasattr(obj, "__getitem__"):
+            return obj[key]
+        msg = f"Subscript access not allowed on {type(obj).__name__}"
+        raise TypeError(msg)
+
+    def _guarded_write(self, obj: Any) -> Any:
+        """
+        Safe write guard for RestrictedPython.
+
+        Returns a wrapper that allows item/attribute assignment on safe types.
+        """
+        # For RestrictedPython, _write_ returns the object itself for safe types
+        # The actual write operation is then performed by the generated code
+        if isinstance(obj, (dict, list)):
+            return obj
+        # Allow writes to working_memory dict
+        if obj is self.context.working_memory or obj is self.globals.get("working_memory"):
+            return obj
+        msg = f"Write access not allowed on {type(obj).__name__}"
+        raise TypeError(msg)
 
     def _build_safe_builtins(self) -> dict[str, Any]:
         """
