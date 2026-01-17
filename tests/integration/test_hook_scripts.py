@@ -70,10 +70,19 @@ class TestInitRLMScript:
 
 
 class TestCheckComplexityScript:
-    """Tests for check_complexity.py script."""
+    """Tests for check_complexity.py script.
 
-    def test_simple_query_not_activated(self):
-        """Simple query should not activate RLM."""
+    The script uses Claude Code compliant hook output:
+    - When RLM activates: outputs hookSpecificOutput with additionalContext
+    - When RLM does not activate: outputs nothing (empty stdout)
+
+    The actual activation decision is stored in ~/.claude/rlm-state/activation.json
+    """
+
+    def test_simple_query_not_activated(self, tmp_path, monkeypatch):
+        """Simple query should not activate RLM and produce no stdout."""
+        monkeypatch.setenv("HOME", str(tmp_path))
+
         result = subprocess.run(
             [
                 sys.executable,
@@ -83,14 +92,23 @@ class TestCheckComplexityScript:
             capture_output=True,
             text=True,
             cwd=str(PROJECT_ROOT),
-            env=get_env_with_pythonpath(),
+            env=get_env_with_pythonpath(tmp_path),
         )
 
-        output = json.loads(result.stdout)
-        assert output["activate_rlm"] is False
+        # When not activated, stdout should be empty (preserves prompt suggestions)
+        assert result.stdout.strip() == ""
 
-    def test_complex_query_activated(self):
-        """Complex query should activate RLM."""
+        # Activation state is saved to file
+        state_file = tmp_path / ".claude" / "rlm-state" / "activation.json"
+        assert state_file.exists()
+        with open(state_file) as f:
+            state = json.load(f)
+        assert state["activate_rlm"] is False
+
+    def test_complex_query_activated(self, tmp_path, monkeypatch):
+        """Complex query should activate RLM with proper hook output."""
+        monkeypatch.setenv("HOME", str(tmp_path))
+
         result = subprocess.run(
             [
                 sys.executable,
@@ -100,11 +118,22 @@ class TestCheckComplexityScript:
             capture_output=True,
             text=True,
             cwd=str(PROJECT_ROOT),
-            env=get_env_with_pythonpath(),
+            env=get_env_with_pythonpath(tmp_path),
         )
 
+        # When activated, should output Claude Code compliant format
         output = json.loads(result.stdout)
-        assert output["activate_rlm"] is True
+        assert "hookSpecificOutput" in output
+        assert output["hookSpecificOutput"]["hookEventName"] == "UserPromptSubmit"
+        assert "additionalContext" in output["hookSpecificOutput"]
+        assert "RLM auto-activated" in output["hookSpecificOutput"]["additionalContext"]
+
+        # Activation state is also saved to file
+        state_file = tmp_path / ".claude" / "rlm-state" / "activation.json"
+        assert state_file.exists()
+        with open(state_file) as f:
+            state = json.load(f)
+        assert state["activate_rlm"] is True
 
 
 class TestSyncContextScript:
