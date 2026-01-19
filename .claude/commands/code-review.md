@@ -9,7 +9,7 @@ Review the current changes following docs/process/code-review.md.
 
 ### Type Safety
 ```bash
-uv run ty check src/
+cd ~/.local/share/rlm-claude-code && uv run ty check src/
 ```
 - All public functions have return type annotations?
 - No `# type: ignore` without justification?
@@ -31,6 +31,7 @@ uv run ty check src/
 
 ### Style
 ```bash
+cd ~/.local/share/rlm-claude-code
 uv run ruff check src/
 uv run ruff format src/ --check
 ```

@@ -5,7 +5,10 @@ Transform Claude Code into a Recursive Language Model agent with intelligent orc
 ## Quick Start
 
 ```bash
-# Setup
+# Install
+./install.sh
+
+# Or for development:
 uv sync --all-extras
 
 # Type check
@@ -13,9 +16,6 @@ uv run ty check src/
 
 # Test (3000+ tests)
 uv run pytest tests/ -v
-
-# Install as plugin
-claude plugins install . --scope user
 ```
 
 ## Project Structure

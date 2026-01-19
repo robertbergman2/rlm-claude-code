@@ -2,7 +2,11 @@ Run the test suite for RLM-Claude-Code.
 
 ## Commands
 
+All commands should be run from the RLM installation directory:
+
 ```bash
+cd ~/.local/share/rlm-claude-code
+
 # All tests
 uv run pytest tests/ -v
 
@@ -35,7 +39,7 @@ uv run pytest-watch tests/ -v
 
 ## Quick Checks
 
-Before committing:
+Before committing, run from `~/.local/share/rlm-claude-code`:
 1. `uv run pytest tests/unit/ -v` — Unit tests pass
 2. `uv run pytest tests/security/ -v` — Security tests pass
 3. `uv run ty check src/` — Type check passes

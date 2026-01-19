@@ -20,27 +20,49 @@ This results in better accuracy on complex tasks while optimizing cost through i
 
 ```bash
 # Clone the repository
-git clone https://github.com/rand/rlm-claude-code.git
+git clone https://github.com/robertbergman2/rlm-claude-code.git
 cd rlm-claude-code
 
-# Install dependencies
-uv sync --all-extras
-
-# Run tests to verify setup
-uv run pytest tests/ -v
+# Run the installer
+./install.sh
 ```
 
-### As a Claude Code Plugin
+The installer will:
+1. Copy Python code to `~/.local/share/rlm-claude-code/`
+2. Install commands to `~/.claude/commands/`
+3. Install skills to `~/.claude/skills/`
+4. Set up a Python virtual environment
+
+### Post-Installation
+
+1. **Add hooks to Claude settings** (optional but recommended):
+   ```bash
+   # View the hooks configuration
+   cat ~/.local/share/rlm-claude-code/hooks.json
+   # Manually merge into ~/.claude/settings.json
+   ```
+
+2. **Configure API keys**:
+   ```bash
+   cp ~/.local/share/rlm-claude-code/.env.example ~/.local/share/rlm-claude-code/.env
+   # Edit .env with your API keys
+   ```
+
+3. **Restart Claude Code** to load the new commands.
+
+### Uninstall
 
 ```bash
-# Add the marketplace (one-time setup)
-claude plugin marketplace add github:rand/rlm-claude-code
-
-# Install the plugin
-claude plugin install rlm-claude-code@rlm-claude-code
+./uninstall.sh
 ```
 
-After installation, start Claude Code and you should see "RLM initialized" on startup.
+After installation, the following commands become available:
+- `/rlm` - Toggle/configure RLM mode
+- `/simple` - Bypass RLM for single operation
+- `/test` - Run test suite
+- `/bench` - Run benchmarks
+- `/code-review` - Review code changes
+- `/trajectory` - Analyze trajectory files
 
 ---
 
@@ -419,20 +441,22 @@ uv run pytest tests/benchmarks/ --benchmark-only
 
 ### RLM Not Initializing
 
-1. Check plugin installation: `claude plugin list`
-2. Check hooks: `ls hooks/hooks.json`
-3. Test init script: `uv run python scripts/init_rlm.py`
+1. Check installation: `ls ~/.local/share/rlm-claude-code/`
+2. Check commands: `ls ~/.claude/commands/rlm.md`
+3. Test init script: `cd ~/.local/share/rlm-claude-code && .venv/bin/python scripts/init_rlm.py`
 
 ### Module Import Errors
 
-Install dependencies:
+Reinstall dependencies:
 ```bash
+cd ~/.local/share/rlm-claude-code
 uv sync --all-extras
 ```
 
 ### Reset Everything
 
 ```bash
+rm ~/.config/rlm-claude-code/preferences.json
 rm ~/.claude/rlm-config.json
 rm ~/.claude/rlm-memory.db
 ```

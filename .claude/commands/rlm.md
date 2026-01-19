@@ -73,11 +73,15 @@ Preferences are saved to `~/.config/rlm-claude-code/preferences.json`
 
 ## Instructions
 
-When the user runs `/rlm <command>`, use the `handle_rlm_command` function from `src/user_preferences.py` to process the command and display the result.
+When the user runs `/rlm <command>`, run the command handler from the RLM installation:
+
+```bash
+cd ~/.local/share/rlm-claude-code && .venv/bin/python -c "from src.user_preferences import handle_rlm_command; print(handle_rlm_command('<command>'))"
+```
 
 For example:
-- `/rlm mode fast` → Call `handle_rlm_command("mode fast")`
-- `/rlm budget $10` → Call `handle_rlm_command("budget $10")`
-- `/rlm status` → Call `handle_rlm_command("status")`
+- `/rlm mode fast` → `handle_rlm_command("mode fast")`
+- `/rlm budget $10` → `handle_rlm_command("budget $10")`
+- `/rlm status` → `handle_rlm_command("status")`
 
 The function returns a status message to display to the user.

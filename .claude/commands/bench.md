@@ -2,7 +2,11 @@ Run performance benchmarks for RLM-Claude-Code.
 
 ## Commands
 
+All commands should be run from the RLM installation directory:
+
 ```bash
+cd ~/.local/share/rlm-claude-code
+
 # All benchmarks
 uv run pytest tests/benchmarks/ --benchmark-only
 
@@ -28,11 +32,13 @@ uv run pytest tests/benchmarks/test_performance.py::test_complexity_classifier_l
 ## Profiling
 
 ```bash
+cd ~/.local/share/rlm-claude-code
+
 # CPU profiling
-python -m cProfile -s cumulative -m src.orchestrator --query "test" 2>&1 | head -50
+.venv/bin/python -m cProfile -s cumulative -m src.orchestrator --query "test" 2>&1 | head -50
 
 # Memory profiling
-python -m memory_profiler src/orchestrator.py
+.venv/bin/python -m memory_profiler src/orchestrator.py
 
 # Line profiling
 kernprof -l -v src/complexity_classifier.py
@@ -42,7 +48,7 @@ kernprof -l -v src/complexity_classifier.py
 
 Track token usage:
 ```bash
-uv run python -m src.tools.cost_tracker --trajectory /path/to/trajectory.json
+cd ~/.local/share/rlm-claude-code && uv run python -m src.tools.cost_tracker --trajectory /path/to/trajectory.json
 ```
 
 Expected costs:
